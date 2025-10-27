@@ -113,6 +113,8 @@
 
         activePeer = { nickname, connectionId, pc };
 
+        setVideoStream(null);
+
         pc.ontrack = (event) => {
           const [stream] = event.streams;
           if (stream) {
@@ -143,7 +145,7 @@
 
           if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
             cleanupPeer({ notify: true });
-            setTimeout(maybeStartPeer, 1500);
+            Promise.resolve().then(maybeStartPeer);
           }
         };
 
@@ -217,7 +219,7 @@
 
         if (payload.nickname === desiredFocus) {
           setVideoStream(null);
-          setTimeout(maybeStartPeer, 2000);
+          Promise.resolve().then(maybeStartPeer);
         }
       }
 
