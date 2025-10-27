@@ -127,6 +127,7 @@
           const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
           const peers = new Map();
+          const takenNicknames = new Set();
 
           let ws;
           let wsReady = false;
@@ -137,6 +138,7 @@
           let autoStartAttempted = false;
           let lastAppliedNickname = "";
           let lastAppliedCameraId = "";
+          let knownPlayers = [];
 
           function peerKey(viewerSocketId, connectionId) {
             return `${viewerSocketId}:${connectionId}`;
@@ -182,7 +184,13 @@
           }
 
           function populateSelect(players) {
-            const currentValue = nicknameSelect.value;
+            if (Array.isArray(players)) {
+              knownPlayers = [...players];
+            }
+
+            const previousValue = nicknameSelect.value;
+            const desiredValue = selectedNickname || previousValue;
+
             nicknameSelect.innerHTML = "";
 
             const placeholder = document.createElement("option");
@@ -190,16 +198,43 @@
             placeholder.textContent = "— выбери ник —";
             nicknameSelect.appendChild(placeholder);
 
-            players.forEach((name) => {
+            let restoredValue = "";
+
+            for (const name of knownPlayers) {
+              if (typeof name !== "string" || !name.trim()) {
+                continue;
+              }
+
               const option = document.createElement("option");
               option.value = name;
-              option.textContent = name;
-              nicknameSelect.appendChild(option);
-            });
 
-            if (players.includes(currentValue)) {
-              nicknameSelect.value = currentValue;
+              const takenByOther = takenNicknames.has(name) && name !== lastAppliedNickname;
+              if (takenByOther) {
+                option.disabled = true;
+                option.textContent = `${name} — занят`;
+              } else {
+                option.textContent = name;
+              }
+
+              nicknameSelect.appendChild(option);
+
+              if (!takenByOther && name === desiredValue) {
+                restoredValue = name;
+              }
             }
+
+            if (restoredValue) {
+              nicknameSelect.value = restoredValue;
+              selectedNickname = restoredValue;
+            } else {
+              nicknameSelect.value = "";
+              if (selectedNickname && takenNicknames.has(selectedNickname) && selectedNickname !== lastAppliedNickname) {
+                selectedNickname = "";
+                status.textContent = "Этот ник уже занят. Выбери другой.";
+              }
+            }
+
+            updateApplyButtonState();
 
             updateApplyButtonState();
           }
@@ -212,6 +247,10 @@
 
           function ensurePublisherRegistration() {
             if (!wsReady || !selectedNickname || !currentStream) {
+              return;
+            }
+
+            if (selectedNickname !== lastAppliedNickname) {
               return;
             }
             sendSignal({ type: "HELLO", role: "publisher", nickname: selectedNickname });
@@ -260,6 +299,20 @@
             } else {
               applySelectionBtn.textContent = "Применить выбор";
             }
+          }
+
+          function updateTakenNicknames(list) {
+            takenNicknames.clear();
+
+            if (Array.isArray(list)) {
+              for (const name of list) {
+                if (typeof name === "string" && name.trim()) {
+                  takenNicknames.add(name.trim());
+                }
+              }
+            }
+
+            populateSelect();
           }
 
           function closeAllPeers() {
@@ -378,8 +431,20 @@
                 case "VIEWER_DISCONNECTED":
                   handleViewerDisconnected(payload);
                   break;
+                case "WELCOME":
+                  if (Array.isArray(payload.publishers)) {
+                    updateTakenNicknames(payload.publishers);
+                  }
+                  break;
+                case "ACTIVE_PUBLISHERS":
+                  updateTakenNicknames(payload.publishers);
+                  break;
                 case "PUBLISHER_REGISTERED":
                   status.textContent = `Камера ${payload.nickname} готова для зрителей.`;
+                  if (payload.nickname) {
+                    takenNicknames.add(payload.nickname);
+                    populateSelect();
+                  }
                   break;
                 case "ERROR":
                   status.textContent = payload.message || "Ошибка сервера.";
