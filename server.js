@@ -183,8 +183,26 @@ app.post("/api/gsi", (req, res) => {
     gsiState.players = updatedPlayers;
   }
 
-  if (data.player && data.player.name) {
-    gsiState.currentFocus = data.player.name;
+  if (data.player && typeof data.player === "object") {
+    const observerSlot = data.player.observer_slot;
+    const spectarget = data.player.spectarget ?? data.player?.state?.spectarget;
+    const playerSteamId = data.player.steamid;
+
+    let focusName = typeof data.player.name === "string" ? data.player.name.trim() : "";
+    if (!focusName && typeof spectarget === "string") {
+      const targetInfo = gsiState.players[spectarget];
+      if (targetInfo?.name) {
+        focusName = targetInfo.name.trim();
+      }
+    }
+
+    const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
+    const spectatingSelf = typeof spectarget === "string" && spectarget === playerSteamId;
+    const hasFocusTarget = Boolean(focusName) && hasValidSlot && !spectatingSelf;
+
+    gsiState.currentFocus = hasFocusTarget ? focusName : null;
+  } else {
+    gsiState.currentFocus = null;
   }
 
   if (data.map && typeof data.map === "object") {

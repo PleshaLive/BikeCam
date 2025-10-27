@@ -1,114 +1,195 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CS2 Camera Register</title>
+  <title>Galaxy Battle | Camera Link</title>
   <style>
+    :root {
+      color-scheme: dark;
+      --brand-primary: #221c3b;
+      --brand-accent: #2f2658;
+      --brand-pop: #6d5ad0;
+      --brand-soft: #3a305f;
+      --surface: rgba(24, 18, 48, 0.92);
+      --surface-strong: rgba(29, 23, 57, 0.96);
+      --border: rgba(109, 90, 208, 0.2);
+      --text-main: #f5f2ff;
+      --text-muted: rgba(245, 242, 255, 0.72);
+    }
+
     body {
       margin: 0;
-      font-family: Arial, sans-serif;
-      background: #0f0f0f;
-      color: #f5f5f5;
+      min-height: 100vh;
       display: flex;
       justify-content: center;
       align-items: center;
-      min-height: 100vh;
+      padding: 40px 16px;
+      font-family: "Montserrat", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text-main);
+      background: radial-gradient(circle at 20% 20%, rgba(109, 90, 208, 0.25), transparent 55%),
+        radial-gradient(circle at 80% 30%, rgba(58, 48, 95, 0.55), transparent 50%),
+        linear-gradient(135deg, #120d25 0%, var(--brand-primary) 45%, #1b1532 100%);
     }
 
     .card {
-      background: #1e1e1e;
-      padding: 24px;
-      border-radius: 12px;
-      box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
-      max-width: 480px;
+      position: relative;
       width: 100%;
+      max-width: 520px;
+      padding: 32px;
+      border-radius: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 45px 90px rgba(11, 9, 22, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(12px);
+    }
+
+    .brand-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 18px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.34em;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-main);
+      background: rgba(109, 90, 208, 0.16);
+      border: 1px solid rgba(109, 90, 208, 0.35);
+      margin-bottom: 18px;
     }
 
     h1 {
-      margin-top: 0;
-      font-size: 1.6rem;
+      margin: 0 0 6px;
+      font-size: 1.9rem;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+    }
+
+    .subtitle {
+      margin: 0 0 28px;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
     label {
       display: block;
-      margin-bottom: 8px;
-      font-size: 0.9rem;
-      color: #ffd93d;
+      margin-bottom: 10px;
+      font-size: 0.82rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
     }
 
     select,
     button {
       width: 100%;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: none;
-      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
       font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
     }
 
     select {
-      background: #2b2b2b;
-      color: #f5f5f5;
+      background: var(--surface-strong);
+      color: var(--text-main);
+    }
+
+    select:disabled {
+      opacity: 0.55;
     }
 
     button {
-      background: #ffd93d;
-      color: #121212;
+      background: linear-gradient(145deg, var(--brand-pop), #4e3ca0);
+      color: var(--text-main);
       cursor: pointer;
-      font-weight: bold;
+      border: none;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+      box-shadow: 0 22px 44px rgba(15, 12, 36, 0.55);
+    }
+
+    button:hover:not([disabled]) {
+      transform: translateY(-2px);
+      box-shadow: 0 26px 54px rgba(15, 12, 36, 0.65);
+    }
+
+    button:active:not([disabled]) {
+      transform: translateY(0);
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid rgba(109, 90, 208, 0.32);
+      box-shadow: none;
+    }
+
+    button.secondary:hover:not([disabled]) {
+      background: rgba(109, 90, 208, 0.12);
     }
 
     #startCameraBtn {
       display: none;
+      margin-top: -4px;
     }
 
     #applySelectionBtn[disabled] {
-      opacity: 0.5;
+      opacity: 0.45;
       cursor: not-allowed;
+      box-shadow: none;
     }
 
     video {
       width: 100%;
-      border-radius: 8px;
-      background: #000;
-      margin-bottom: 12px;
+      border-radius: 16px;
+      background: rgba(12, 9, 28, 0.88);
+      margin-bottom: 20px;
+      border: 1px solid rgba(109, 90, 208, 0.24);
+      box-shadow: inset 0 0 65px rgba(11, 9, 30, 0.65);
     }
 
     .hint {
       font-size: 0.85rem;
-      color: #c7c7c7;
-      margin-bottom: 16px;
+      color: var(--text-muted);
+      margin-bottom: 18px;
+      letter-spacing: 0.04em;
     }
 
     .status {
       font-size: 0.85rem;
-      color: #8f8f8f;
+      color: var(--text-muted);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Привяжи свою камеру</h1>
-    <label for="nicknameSelect">Выбери свой никнейм</label>
+    <span class="brand-chip">Galaxy Battle</span>
+    <h1>Camera Link Console</h1>
+    <p class="subtitle">Choose your nickname and camera to go live.</p>
+    <label for="nicknameSelect">Select your nickname</label>
     <select id="nicknameSelect">
-      <option value="">— выбери ник —</option>
+  <option value="">- choose nickname -</option>
     </select>
-    <button id="refreshBtn" type="button">Обновить список игроков</button>
+    <button id="refreshBtn" type="button" class="secondary">Refresh player list</button>
 
-    <label for="cameraSelect">Выбери камеру</label>
+    <label for="cameraSelect">Select your camera</label>
     <select id="cameraSelect">
-      <option value="">— камера по умолчанию —</option>
+  <option value="">- default camera -</option>
     </select>
-    <button id="cameraRefreshBtn" type="button">Обновить список камер</button>
-    <button id="applySelectionBtn" type="button" disabled>Применить выбор</button>
-    <button id="startCameraBtn" type="button">Включить камеру</button>
+    <button id="cameraRefreshBtn" type="button" class="secondary">Refresh camera list</button>
+  <button id="applySelectionBtn" type="button" disabled>Apply Selection</button>
+    <button id="startCameraBtn" type="button">Enable camera</button>
 
     <video id="camPreview" autoplay playsinline muted></video>
-    <p class="hint">Если в списке нет твоего ника — скажи режиссёру.</p>
-    <p class="status" id="status">Запрашиваем доступ к камере…</p>
+    <p class="hint">If your nickname is missing, ping the broadcast lead.</p>
+  <p class="status" id="status">Requesting camera access...</p>
   </div>
 
   <script>
@@ -179,7 +260,7 @@
               populateSelect(payload.players || []);
               updateApplyButtonState();
             } catch (error) {
-              status.textContent = "Не удалось загрузить игроков. Попробуй обновить список позже.";
+              status.textContent = "Unable to load players. Try refreshing later.";
             }
           }
 
@@ -195,7 +276,7 @@
 
             const placeholder = document.createElement("option");
             placeholder.value = "";
-            placeholder.textContent = "— выбери ник —";
+            placeholder.textContent = "- choose nickname -";
             nicknameSelect.appendChild(placeholder);
 
             let restoredValue = "";
@@ -211,7 +292,7 @@
               const takenByOther = takenNicknames.has(name) && name !== lastAppliedNickname;
               if (takenByOther) {
                 option.disabled = true;
-                option.textContent = `${name} — занят`;
+                option.textContent = `${name} - taken`;
               } else {
                 option.textContent = name;
               }
@@ -230,7 +311,7 @@
               nicknameSelect.value = "";
               if (selectedNickname && takenNicknames.has(selectedNickname) && selectedNickname !== lastAppliedNickname) {
                 selectedNickname = "";
-                status.textContent = "Этот ник уже занят. Выбери другой.";
+                status.textContent = "That nickname is already taken. Please pick another.";
               }
             }
 
@@ -269,7 +350,7 @@
               session.pc.onconnectionstatechange = null;
               session.pc.close();
             } catch (error) {
-              console.warn("Не удалось корректно закрыть peer", error);
+              console.warn("Failed to close peer cleanly", error);
             }
 
             if (notifyServer) {
@@ -290,14 +371,14 @@
             applySelectionBtn.disabled = !(nicknameReady && cameraReady);
 
             if (applySelectionBtn.disabled) {
-              applySelectionBtn.textContent = "Применить выбор";
+              applySelectionBtn.textContent = "Apply Selection";
               return;
             }
 
             if (sameSelection) {
-              applySelectionBtn.textContent = "Выбор применён";
+              applySelectionBtn.textContent = "Selection Applied";
             } else {
-              applySelectionBtn.textContent = "Применить выбор";
+              applySelectionBtn.textContent = "Apply Selection";
             }
           }
 
@@ -353,7 +434,7 @@
 
           async function handleViewerOffer(payload) {
             if (!currentStream) {
-              status.textContent = "Камера не запущена, нет чего отдавать зрителю.";
+              status.textContent = "Camera preview is offline. Start the feed first.";
               return;
             }
 
@@ -378,8 +459,8 @@
                 sdp: pc.localDescription,
               });
             } catch (error) {
-              console.error("Не удалось обработать offer от зрителя", error);
-              status.textContent = "Ошибка WebRTC переговоров, попробуй обновить страницу.";
+              console.error("Failed to process viewer offer", error);
+              status.textContent = "WebRTC negotiation failed. Refresh the page and try again.";
               cleanupPeer(key, true);
             }
           }
@@ -395,7 +476,7 @@
             try {
               await session.pc.addIceCandidate(candidate || null);
             } catch (error) {
-              console.error("Ошибка добавления ICE кандидата", error);
+              console.error("Failed to apply ICE candidate", error);
             }
           }
 
@@ -409,7 +490,7 @@
 
             ws.addEventListener("open", () => {
               wsReady = true;
-              status.textContent = "Соединение с сервером установлено. Выбери ник и включи камеру.";
+              status.textContent = "Connected to the server. Pick your nickname and enable the camera.";
               ensurePublisherRegistration();
             });
 
@@ -440,14 +521,14 @@
                   updateTakenNicknames(payload.publishers);
                   break;
                 case "PUBLISHER_REGISTERED":
-                  status.textContent = `Камера ${payload.nickname} готова для зрителей.`;
+                  status.textContent = `Camera ${payload.nickname} is live for viewers.`;
                   if (payload.nickname) {
                     takenNicknames.add(payload.nickname);
                     populateSelect();
                   }
                   break;
                 case "ERROR":
-                  status.textContent = payload.message || "Ошибка сервера.";
+                  status.textContent = payload.message || "Server error.";
                   break;
                 default:
                   break;
@@ -457,12 +538,12 @@
             ws.addEventListener("close", () => {
               wsReady = false;
               closeAllPeers();
-              status.textContent = "Соединение закрыто. Переподключаемся…";
+              status.textContent = "Connection closed. Reconnecting...";
               setTimeout(startWebSocket, 2000);
             });
 
             ws.addEventListener("error", () => {
-              status.textContent = "Ошибка соединения. Попробуй обновить страницу.";
+              status.textContent = "Connection error. Refresh the page if it persists.";
             });
           }
 
@@ -508,7 +589,7 @@
               if (videoInputs.length === 0) {
                 const option = document.createElement("option");
                 option.value = "";
-                option.textContent = "Камера не найдена";
+                option.textContent = "No camera found";
                 cameraSelect.appendChild(option);
                 cameraSelect.disabled = true;
                 updateApplyButtonState();
@@ -520,7 +601,7 @@
               videoInputs.forEach((device, index) => {
                 const option = document.createElement("option");
                 option.value = device.deviceId;
-                option.textContent = device.label || `Камера ${index + 1}`;
+                option.textContent = device.label || `Camera ${index + 1}`;
                 cameraSelect.appendChild(option);
               });
 
@@ -534,7 +615,7 @@
 
               updateApplyButtonState();
             } catch (error) {
-              console.error("Не удалось получить список камер", error);
+              console.error("Failed to enumerate cameras", error);
               updateApplyButtonState();
             }
           }
@@ -572,7 +653,7 @@
                     frameRate: { ideal: 30, max: 30 },
                   });
                 } catch (applyError) {
-                  console.warn("Не удалось применить расширенные ограничения камеры", applyError);
+                  console.warn("Failed to apply advanced camera constraints", applyError);
                 }
               }
 
@@ -580,7 +661,7 @@
               selectedCameraId = appliedDeviceId;
               pendingDeviceId = "";
               await loadCameraDevices(appliedDeviceId);
-              status.textContent = "Камера готова. Выбери ник и нажми \"Применить выбор\".";
+              status.textContent = "Camera feed is ready. Apply your selection to go live.";
               hideStartButton();
               setCameraControlsEnabled(true);
               ensurePublisherRegistration();
@@ -594,14 +675,14 @@
               const errorMessage = (error?.message || "").toLowerCase();
 
               if (error?.code === "MEDIA_NOT_SUPPORTED") {
-                status.textContent = "Браузер не поддерживает доступ к камере. Попробуй современный браузер или HTTPS.";
+                status.textContent = "This browser does not support camera APIs. Switch to a modern browser or HTTPS.";
                 showStartButton();
                 updateApplyButtonState();
                 return;
               }
 
               if (!hasSecureContext) {
-                status.textContent = "Для доступа к камере нужен HTTPS или запуск с localhost.";
+                status.textContent = "Camera access requires HTTPS or launching from localhost.";
                 showStartButton();
                 updateApplyButtonState();
                 return;
@@ -609,7 +690,7 @@
 
               if (allowFallback && deviceId) {
                 pendingDeviceId = "";
-                status.textContent = "Не удалось запустить выбранную камеру. Пробуем стандартную...";
+                status.textContent = "Selected camera failed to start. Falling back to the default device.";
                 setTimeout(() => startStream(undefined, false), 200);
                 showStartButton();
                 updateApplyButtonState();
@@ -617,18 +698,18 @@
               }
 
               if (errorName === "NotAllowedError" || errorName === "SecurityError" || errorMessage.includes("gesture")) {
-                showStartButton("Нажми кнопку \"Включить камеру\" и разреши доступ к вебке.");
+                showStartButton("Click \"Enable camera\" and grant permission to the browser.");
               } else if (errorName === "NotFoundError") {
-                status.textContent = "Камера не найдена. Подключи устройство и нажми \"Включить камеру\".";
+                status.textContent = "No camera detected. Plug in a device and press \"Enable camera\".";
                 showStartButton();
               } else if (errorName === "AbortError") {
-                status.textContent = "Не удалось запустить камеру. Попробуй снова.";
+                status.textContent = "Camera failed to start. Try again.";
                 showStartButton();
               } else if (errorName === "OverconstrainedError" || errorMessage.includes("start video source") || errorMessage.includes("could not start")) {
-                status.textContent = "Камера не может стартовать с текущими настройками. Попробуй выбрать другую камеру.";
+                status.textContent = "Camera cannot start with the current constraints. Choose another device.";
                 showStartButton();
               } else {
-                status.textContent = "Ошибка камеры: " + (error?.message || "Неизвестная ошибка");
+                status.textContent = "Camera error: " + (error?.message || "Unknown error");
                 showStartButton();
               }
               updateApplyButtonState();
@@ -638,9 +719,9 @@
           nicknameSelect.addEventListener("change", () => {
             selectedNickname = nicknameSelect.value;
             if (!selectedNickname) {
-              status.textContent = "Выбери свой ник и камеру, затем нажми \"Применить выбор\".";
+              status.textContent = "Choose your nickname and camera, then press \"Apply Selection\".";
             } else if (selectedNickname !== lastAppliedNickname) {
-              status.textContent = `Выбрано: ${selectedNickname}. Не забудь нажать \"Применить выбор\".`;
+              status.textContent = `Selected ${selectedNickname}. Don't forget to press \"Apply Selection\".`;
             }
             updateApplyButtonState();
           });
@@ -659,7 +740,7 @@
               selectedCameraId = pendingDeviceId;
             }
             if (selectedNickname && (selectedNickname !== lastAppliedNickname || (deviceId || "") !== lastAppliedCameraId)) {
-              status.textContent = "Настройки изменены. Нажми \"Применить выбор\".";
+              status.textContent = "Settings changed. Press \"Apply Selection\" to confirm.";
             }
             updateApplyButtonState();
           });
@@ -674,7 +755,7 @@
             }
 
             if (!selectedNickname) {
-              status.textContent = "Выбери ник, чтобы применить настройки.";
+              status.textContent = "Select a nickname before applying settings.";
               return;
             }
 
@@ -692,15 +773,15 @@
             updateApplyButtonState();
 
             if (currentStream) {
-              status.textContent = `Настройки применены для ${selectedNickname}.`;
+              status.textContent = `Settings applied for ${selectedNickname}.`;
             } else {
-              status.textContent = "Настройки сохранены. Включи камеру, чтобы начать трансляцию.";
+              status.textContent = "Settings saved. Enable the camera to go live.";
             }
           });
 
           startCameraBtn.addEventListener("click", () => {
             startCameraBtn.disabled = true;
-            status.textContent = "Запрашиваем доступ к камере…";
+            status.textContent = "Requesting camera access...";
             startStream(pendingDeviceId || selectedCameraId || undefined);
           });
 
@@ -709,11 +790,11 @@
           updateApplyButtonState();
 
           loadCameraDevices().catch(() => {
-            status.textContent = "Не удалось получить список камер. Дай разрешение и попробуй снова.";
+            status.textContent = "Unable to list cameras. Grant permission and try again.";
           });
 
           if (!mediaApisAvailable()) {
-            status.textContent = "Браузер не поддерживает API камеры. Попробуй обновить браузер или открыть страницу в Chrome/Edge/Firefox.";
+            status.textContent = "This browser does not support the camera API. Update or switch to Chrome/Edge/Firefox.";
             showStartButton();
           } else {
             setTimeout(() => {

@@ -64,7 +64,7 @@
       }
 
       if (!feedStack || videoLayers.length < 2) {
-        console.error("Не удалось инициализировать слои видеопотока для фокусной страницы.");
+        console.error("Unable to initialize video layers for the focus page.");
         return;
       }
       const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
@@ -231,7 +231,7 @@
             activeVideoIndex = targetIndex;
           })
           .catch((error) => {
-            console.error("Не удалось отобразить поток", error);
+            console.error("Failed to render stream", error);
           });
       }
 
@@ -260,7 +260,7 @@
         }
 
         if (displayedStream && displayedNickname !== desiredFocus) {
-          // Держим прошлый поток, пока новый не появится, чтобы избежать мигания.
+          // Keep the previous stream visible until the new one appears to avoid flicker.
           return;
         }
 
@@ -297,7 +297,7 @@
           session.pc.onconnectionstatechange = null;
           session.pc.close();
         } catch (error) {
-          console.warn("Не удалось закрыть peer", error);
+    console.warn("Failed to close peer", error);
         }
 
         if (session.stream) {
@@ -409,7 +409,7 @@
             sdp: pc.localDescription,
           });
         } catch (error) {
-          console.error("Не удалось начать WebRTC-сессию", error);
+      console.error("Failed to start WebRTC session", error);
           restartSession(nickname);
         }
       }
@@ -446,7 +446,7 @@
         }
 
         session.pc.setRemoteDescription(payload.sdp).catch((error) => {
-          console.error("Не удалось применить answer", error);
+      console.error("Failed to apply answer", error);
           restartSession(nickname);
         });
       }
@@ -465,7 +465,7 @@
         try {
           await session.pc.addIceCandidate(payload.candidate || null);
         } catch (error) {
-          console.error("Ошибка ICE", error);
+      console.error("ICE candidate error", error);
         }
       }
 

@@ -1,7 +1,7 @@
 (() => {
 	const TEAM_TITLES = {
-		CT: "Команда CT",
-		T: "Команда T",
+		CT: "CT Squad",
+		T: "T Squad",
 	};
 
 	const rawTeamKey = (
@@ -12,7 +12,7 @@
 	).toUpperCase();
 
 	const teamKey = rawTeamKey;
-		const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Команда");
+		const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Squad");
 		let activeTeamTitle = friendlyTitle;
 
 	const titleElement = document.getElementById("teamLabel");
@@ -40,14 +40,14 @@
 
 	if (!teamKey) {
 		if (statusElement) {
-			statusElement.textContent = "Команда не указана. Добавьте ?team=CT или задайте TEAM_KEY.";
+			statusElement.textContent = "Team is not set. Provide ?team=CT or define TEAM_KEY.";
 		}
 		return;
 	}
 
 	if (!gridElement) {
 		if (statusElement) {
-			statusElement.textContent = "Не найдена сетка камер.";
+			statusElement.textContent = "Camera grid element not found.";
 		}
 		return;
 	}
@@ -103,7 +103,7 @@
 
 		const placeholder = document.createElement("div");
 		placeholder.className = "placeholder";
-		placeholder.textContent = "Нет камеры";
+		placeholder.textContent = "No live feed";
 
 		const label = document.createElement("div");
 		label.className = "nick";
@@ -126,7 +126,7 @@
 
 		const placeholder = document.createElement("div");
 		placeholder.className = "placeholder";
-		placeholder.textContent = "Ожидаем игрока";
+		placeholder.textContent = "Awaiting player";
 
 		const label = document.createElement("div");
 		label.className = "nick";
@@ -257,7 +257,7 @@
 			session.pc.onconnectionstatechange = null;
 			session.pc.close();
 		} catch (error) {
-			console.warn("Не удалось корректно закрыть peer", error);
+			console.warn("Failed to close peer cleanly", error);
 		}
 
 		if (session.stream) {
@@ -370,7 +370,7 @@
 				sdp: pc.localDescription,
 			});
 		} catch (error) {
-			console.error("Не удалось создать оффер для", nickname, error);
+			console.error("Failed to create offer for", nickname, error);
 			restartSession(nickname);
 		}
 	}
@@ -407,7 +407,7 @@
 		}
 
 		session.pc.setRemoteDescription(payload.sdp).catch((error) => {
-			console.error("Не удалось применить answer", nickname, error);
+			console.error("Failed to apply answer", nickname, error);
 			restartSession(nickname);
 		});
 	}
@@ -426,7 +426,7 @@
 		try {
 			await session.pc.addIceCandidate(payload.candidate || null);
 		} catch (error) {
-			console.error("Ошибка ICE", nickname, error);
+			console.error("ICE candidate error", nickname, error);
 		}
 	}
 
@@ -520,7 +520,7 @@
 			viewerRegistered = false;
 			knownPublishers.clear();
 			cleanupAllSessions({ notify: false });
-			ensureStatus("WebSocket отключён. Переподключаемся…");
+			ensureStatus("WebSocket disconnected. Reconnecting...");
 
 			if (reconnectTimer) {
 				return;
@@ -549,9 +549,9 @@
 					}
 
 					renderPlayers(teamPlayers);
-			ensureStatus(teamPlayers.length ? "" : "Состав команды пока не определён.");
+			ensureStatus(teamPlayers.length ? "" : "Team roster is not available yet.");
 		} catch (error) {
-			ensureStatus("Не удалось получить состав команды.");
+			ensureStatus("Failed to fetch team roster.");
 		}
 	}
 

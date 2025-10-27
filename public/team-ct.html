@@ -1,23 +1,32 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Команда CT — Камеры</title>
+  <title>Galaxy Battle - CT Squad</title>
   <style>
     :root {
       color-scheme: dark;
+      --brand-primary: #221c3b;
+      --brand-mid: #2d2550;
+      --brand-bright: #3c3168;
+      --brand-highlight: #6d5ad0;
+      --surface: rgba(16, 12, 29, 0.75);
+      --text-strong: #f5f2ff;
+      --text-soft: rgba(245, 242, 255, 0.72);
     }
 
     body {
       margin: 0;
       min-height: 100vh;
-      background: transparent;
       display: flex;
       justify-content: center;
       align-items: center;
-      color: #ffffff;
-      font-family: "Blender Pro", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text-strong);
+      font-family: "Montserrat", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: radial-gradient(circle at 20% 20%, rgba(109, 90, 208, 0.28), transparent 55%),
+        radial-gradient(circle at 80% 30%, rgba(60, 49, 104, 0.4), transparent 50%),
+        linear-gradient(135deg, #120d25 0%, var(--brand-primary) 40%, #1b1532 100%);
     }
 
     .stage {
@@ -25,39 +34,61 @@
       width: 1920px;
       height: 1080px;
       overflow: hidden;
+      border-radius: 24px;
+      background: linear-gradient(160deg, rgba(34, 28, 59, 0.96), rgba(28, 22, 50, 0.88));
+      box-shadow: 0 40px 90px rgba(13, 10, 25, 0.65), inset 0 0 0 2px rgba(109, 90, 208, 0.12);
+    }
+
+    .stage::before {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background: radial-gradient(circle at 10% 15%, rgba(109, 90, 208, 0.35), transparent 55%),
+        radial-gradient(circle at 85% 20%, rgba(70, 56, 130, 0.45), transparent 60%);
+      filter: blur(60px);
+      opacity: 0.85;
+      z-index: 0;
+    }
+
+    .brand-mark {
+      position: absolute;
+      top: 40px;
+      left: 60px;
+      padding: 12px 24px;
+      border-radius: 999px;
+      background: rgba(109, 90, 208, 0.18);
+      border: 1px solid rgba(109, 90, 208, 0.4);
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      font-size: 18px;
+      color: var(--text-strong);
+      z-index: 3;
     }
 
     .team-header {
       position: absolute;
-      top: 62px;
-      left: calc(50% - 1142px / 2 - 95px);
-      width: 1142px;
-      height: 156px;
+      top: 150px;
+      left: 120px;
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      align-items: flex-start;
-      gap: 16px;
+      gap: 12px;
       z-index: 2;
       text-transform: uppercase;
     }
 
     #teamLabel {
       margin: 0;
-      font-weight: 900;
-      font-size: 110px;
-      line-height: 0.8256;
-      letter-spacing: 0.06em;
-      display: flex;
-      align-items: center;
-      color: #ffffff;
-      white-space: nowrap;
+      font-weight: 800;
+      font-size: 96px;
+      letter-spacing: 0.12em;
+      text-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
     }
 
     #teamStatus {
-      font-size: 26px;
+      font-size: 24px;
       letter-spacing: 0.08em;
-      color: rgba(255, 255, 255, 0.8);
+      color: var(--text-soft);
       min-height: 32px;
     }
 
@@ -72,11 +103,9 @@
       position: absolute;
       width: 563px;
       height: 370px;
-      border-radius: 0;
-      background: transparent;
-      box-shadow: none;
       overflow: visible;
       pointer-events: none;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
 
     .slot:nth-child(1) {
@@ -106,13 +135,16 @@
 
     .slot .frame {
       position: absolute;
-      left: -1px;
-      top: 1px;
-      width: 564.65px;
-      height: 317.54px;
-      background: rgba(0, 0, 0, 0.94);
-      border-radius: 0;
+      left: -6px;
+      top: -6px;
+      width: 576px;
+      height: 332px;
+      border-radius: 18px;
+      background: rgba(16, 12, 29, 0.82);
+      border: 1px solid rgba(109, 90, 208, 0.22);
+      box-shadow: 0 22px 55px rgba(8, 6, 18, 0.65), inset 0 0 80px rgba(109, 90, 208, 0.12);
       overflow: hidden;
+      backdrop-filter: blur(4px);
     }
 
     .slot video {
@@ -129,11 +161,11 @@
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 32px;
-      letter-spacing: 0.08em;
+      font-size: 26px;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.8);
-      background: rgba(0, 0, 0, 0.55);
+      color: rgba(245, 242, 255, 0.68);
+      background: linear-gradient(135deg, rgba(34, 28, 59, 0.78), rgba(28, 22, 50, 0.68));
     }
 
     .slot.no-feed .placeholder,
@@ -147,25 +179,27 @@
 
     .slot .nick {
       position: absolute;
-      left: 4px;
-      bottom: 10px;
-      width: calc(100% - 8px);
-      height: 51.56px;
+      left: 6px;
+      bottom: -62px;
+      width: calc(100% - 12px);
+      height: 56px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 900;
-      font-size: 43.47px;
-      line-height: 0.8256;
-      letter-spacing: 0.08em;
+      font-weight: 800;
+      font-size: 36px;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: #ffffff;
-      background: transparent;
-      backdrop-filter: none;
+      color: var(--text-strong);
+      background: rgba(34, 28, 59, 0.7);
+      border: 1px solid rgba(109, 90, 208, 0.25);
+      border-radius: 32px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 18px 40px rgba(16, 12, 29, 0.55);
     }
 
     .slot.placeholder-only .nick {
-      opacity: 0.6;
+      opacity: 0.55;
     }
 
     @media (max-width: 1920px) {
@@ -179,8 +213,9 @@
 </head>
 <body data-team="CT">
   <div class="stage">
+    <div class="brand-mark">Galaxy Battle</div>
     <div class="team-header">
-      <h1 id="teamLabel">Команда CT</h1>
+      <h1 id="teamLabel">CT Squad</h1>
       <div id="teamStatus"></div>
     </div>
     <div id="cameraGrid"></div>
