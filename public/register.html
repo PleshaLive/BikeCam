@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CS2 Camera Register</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f0f0f;
+      color: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .card {
+      background: #1e1e1e;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
+      max-width: 480px;
+      width: 100%;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 1.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+      color: #ffd93d;
+    }
+
+    select,
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      margin-bottom: 12px;
+      font-size: 1rem;
+    }
+
+    select {
+      background: #2b2b2b;
+      color: #f5f5f5;
+    }
+
+    button {
+      background: #ffd93d;
+      color: #121212;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #startCameraBtn {
+      display: none;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 8px;
+      background: #000;
+      margin-bottom: 12px;
+    }
+
+    .hint {
+      font-size: 0.85rem;
+      color: #c7c7c7;
+      margin-bottom: 16px;
+    }
+
+    .status {
+      font-size: 0.85rem;
+      color: #8f8f8f;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Привяжи свою камеру</h1>
+    <label for="nicknameSelect">Выбери свой никнейм</label>
+    <select id="nicknameSelect">
+      <option value="">— выбери ник —</option>
+    </select>
+    <button id="refreshBtn" type="button">Обновить список игроков</button>
+
+    <label for="cameraSelect">Выбери камеру</label>
+    <select id="cameraSelect">
+      <option value="">— камера по умолчанию —</option>
+    </select>
+    <button id="cameraRefreshBtn" type="button">Обновить список камер</button>
+    <button id="startCameraBtn" type="button">Включить камеру</button>
+
+    <video id="camPreview" autoplay playsinline muted></video>
+    <p class="hint">Если в списке нет твоего ника — скажи режиссёру.</p>
+    <p class="status" id="status">Запрашиваем доступ к камере…</p>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const nicknameSelect = document.getElementById("nicknameSelect");
+      const refreshBtn = document.getElementById("refreshBtn");
+      const cameraSelect = document.getElementById("cameraSelect");
+      const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
+      const startCameraBtn = document.getElementById("startCameraBtn");
+      const status = document.getElementById("status");
+      const video = document.getElementById("camPreview");
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+      const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
+      let ws;
+      let captureIntervalId = null;
+      let selectedNickname = "";
+      let currentStream = null;
+      let selectedCameraId = "";
+      let pendingDeviceId = "";
+      let autoStartAttempted = false;
+
+  cameraSelect.disabled = false;
+  cameraRefreshBtn.disabled = false;
+
+      function mediaApisAvailable() {
+        return (
+          (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") ||
+          typeof navigator.getUserMedia === "function" ||
+          typeof navigator.webkitGetUserMedia === "function" ||
+          typeof navigator.mozGetUserMedia === "function"
+        );
+      }
+
+      async function requestStream(constraints) {
+        if (navigator.mediaDevices?.getUserMedia) {
+          return navigator.mediaDevices.getUserMedia(constraints);
+        }
+
+        const legacy = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+        if (legacy) {
+          return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
+        }
+
+        const error = new Error("MEDIA_NOT_SUPPORTED");
+        error.code = "MEDIA_NOT_SUPPORTED";
+        throw error;
+      }
+
+      async function loadPlayers() {
+        try {
+          const response = await fetch("/players", { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("Failed to load players");
+          }
+
+          const payload = await response.json();
+          populateSelect(payload.players || []);
+        } catch (error) {
+          status.textContent = "Не удалось загрузить игроков. Попробуй обновить список позже.";
+        }
+      }
+
+      function populateSelect(players) {
+        const currentValue = nicknameSelect.value;
+        nicknameSelect.innerHTML = "";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "— выбери ник —";
+        nicknameSelect.appendChild(placeholder);
+
+        players.forEach((name) => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          nicknameSelect.appendChild(option);
+        });
+
+        if (players.includes(currentValue)) {
+          nicknameSelect.value = currentValue;
+        }
+      }
+
+      function stopCurrentStream() {
+        if (currentStream) {
+          currentStream.getTracks().forEach((track) => track.stop());
+          currentStream = null;
+        }
+        video.srcObject = null;
+      }
+
+      function showStartButton(message) {
+        if (message) {
+          status.textContent = message;
+        }
+        startCameraBtn.style.display = "block";
+        startCameraBtn.disabled = false;
+      }
+
+      function hideStartButton() {
+        startCameraBtn.style.display = "none";
+      }
+
+      function setCameraControlsEnabled(enabled) {
+        cameraSelect.disabled = !enabled;
+        cameraRefreshBtn.disabled = !enabled;
+      }
+
+      async function loadCameraDevices(preferredId = "") {
+        if (!navigator.mediaDevices?.enumerateDevices) {
+          return;
+        }
+
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter((device) => device.kind === "videoinput");
+
+          const currentValue = preferredId || pendingDeviceId || selectedCameraId || cameraSelect.value;
+
+          cameraSelect.innerHTML = "";
+          if (videoInputs.length === 0) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "Камера не найдена";
+            cameraSelect.appendChild(option);
+            cameraSelect.disabled = true;
+            return;
+          }
+
+          cameraSelect.disabled = false;
+
+          videoInputs.forEach((device, index) => {
+            const option = document.createElement("option");
+            option.value = device.deviceId;
+            option.textContent = device.label || `Камера ${index + 1}`;
+            cameraSelect.appendChild(option);
+          });
+
+          const matched = videoInputs.some((device) => device.deviceId === currentValue);
+          if (matched) {
+            cameraSelect.value = currentValue;
+          } else {
+            cameraSelect.selectedIndex = 0;
+            selectedCameraId = cameraSelect.value;
+          }
+        } catch (error) {
+          console.error("Не удалось получить список камер", error);
+        }
+      }
+
+      function startWebSocket() {
+        ws = new WebSocket(wsUrl);
+
+        ws.addEventListener("open", () => {
+          status.textContent = "Соединение с сервером установлено. Выбери ник, чтобы отправлять кадры.";
+          startCaptureLoop();
+        });
+
+        ws.addEventListener("close", () => {
+          status.textContent = "Соединение закрыто. Перезагрузи страницу или скажи режиссёру.";
+          stopCaptureLoop();
+        });
+
+        ws.addEventListener("error", () => {
+          status.textContent = "Ошибка соединения. Попробуй обновить страницу.";
+        });
+      }
+
+      function startCaptureLoop() {
+        stopCaptureLoop();
+        captureIntervalId = setInterval(() => {
+          if (!selectedNickname || !ws || ws.readyState !== WebSocket.OPEN) {
+            return;
+          }
+
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+            return;
+          }
+
+          const targetWidth = 960;
+          const ratio = video.videoWidth ? video.videoHeight / video.videoWidth : 9 / 16;
+          const targetHeight = Math.max(1, Math.round(targetWidth * ratio));
+
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+          ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+          try {
+            const frame = canvas.toDataURL("image/jpeg", 0.92);
+            ws.send(
+              JSON.stringify({
+                type: "CAM_FRAME",
+                nickname: selectedNickname,
+                frame,
+              })
+            );
+          } catch (error) {
+            console.error("Failed to capture frame", error);
+          }
+        }, 33);
+      }
+
+      function stopCaptureLoop() {
+        if (captureIntervalId !== null) {
+          clearInterval(captureIntervalId);
+          captureIntervalId = null;
+        }
+      }
+
+      async function startStream(deviceId, allowFallback = true) {
+        autoStartAttempted = true;
+        stopCurrentStream();
+
+        try {
+          const constraints = {
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 },
+            },
+            audio: false,
+          };
+
+          if (deviceId) {
+            constraints.video.deviceId = { exact: deviceId };
+          } else {
+            constraints.video.facingMode = { ideal: "user" };
+          }
+
+          const stream = await requestStream(constraints);
+          currentStream = stream;
+          video.srcObject = stream;
+          const activeTrack = stream.getVideoTracks()[0];
+          const appliedDeviceId = activeTrack?.getSettings?.().deviceId || deviceId || "";
+          selectedCameraId = appliedDeviceId;
+          pendingDeviceId = "";
+          await loadCameraDevices(appliedDeviceId);
+          status.textContent = "Камера готова. Выбери свой ник, чтобы начать трансляцию.";
+          hideStartButton();
+          setCameraControlsEnabled(true);
+        } catch (error) {
+          console.error("getUserMedia error", error);
+          stopCurrentStream();
+          setCameraControlsEnabled(true);
+
+          const errorName = error?.name || "";
+          const errorMessage = (error?.message || "").toLowerCase();
+
+          if (error?.code === "MEDIA_NOT_SUPPORTED") {
+            status.textContent = "Браузер не поддерживает доступ к камере. Попробуй современный браузер или HTTPS.";
+            showStartButton();
+            return;
+          }
+
+          if (!hasSecureContext) {
+            status.textContent = "Для доступа к камере нужен HTTPS или запуск с localhost.";
+            showStartButton();
+            return;
+          }
+
+          if (allowFallback && deviceId) {
+            pendingDeviceId = "";
+            status.textContent = "Не удалось запустить выбранную камеру. Пробуем стандартную...";
+            setTimeout(() => startStream(undefined, false), 200);
+            showStartButton();
+            return;
+          }
+
+          if (errorName === "NotAllowedError" || errorName === "SecurityError" || errorMessage.includes("gesture")) {
+            showStartButton("Нажми кнопку \"Включить камеру\" и разреши доступ к вебке.");
+          } else if (errorName === "NotFoundError") {
+            status.textContent = "Камера не найдена. Подключи устройство и нажми \"Включить камеру\".";
+            showStartButton();
+          } else if (errorName === "AbortError") {
+            status.textContent = "Не удалось запустить камеру. Попробуй снова.";
+            showStartButton();
+          } else if (errorName === "OverconstrainedError" || errorMessage.includes("start video source") || errorMessage.includes("could not start")) {
+            status.textContent = "Камера не может стартовать с текущими настройками. Попробуй выбрать другую камеру.";
+            showStartButton();
+          } else {
+            status.textContent = "Ошибка камеры: " + (error?.message || "Неизвестная ошибка");
+            showStartButton();
+          }
+        }
+      }
+
+      nicknameSelect.addEventListener("change", () => {
+        selectedNickname = nicknameSelect.value;
+        if (selectedNickname) {
+          status.textContent = `Отправляем кадры от ника ${selectedNickname}.`;
+        } else {
+          status.textContent = "Выбери свой ник, чтобы начать трансляцию.";
+        }
+      });
+
+      refreshBtn.addEventListener("click", () => {
+        loadPlayers();
+      });
+
+      cameraSelect.addEventListener("change", () => {
+        const deviceId = cameraSelect.value;
+        if (deviceId === selectedCameraId && currentStream) {
+          return;
+        }
+        pendingDeviceId = deviceId || "";
+        startStream(deviceId || undefined);
+      });
+
+      cameraRefreshBtn.addEventListener("click", () => {
+        loadCameraDevices();
+      });
+
+      startCameraBtn.addEventListener("click", () => {
+        startCameraBtn.disabled = true;
+        status.textContent = "Запрашиваем доступ к камере…";
+        startStream(pendingDeviceId || selectedCameraId || undefined);
+      });
+
+      loadPlayers();
+      setCameraControlsEnabled(true);
+
+      loadCameraDevices().catch(() => {
+        status.textContent = "Не удалось получить список камер. Дай разрешение и попробуй снова.";
+      });
+
+      if (!mediaApisAvailable()) {
+        status.textContent = "Браузер не поддерживает API камеры. Попробуй обновить браузер или открыть страницу в Chrome/Edge/Firefox.";
+        showStartButton();
+      } else {
+        setTimeout(() => {
+          if (autoStartAttempted || currentStream) {
+            return;
+          }
+          autoStartAttempted = true;
+          startStream();
+        }, 350);
+      }
+
+      startWebSocket();
+
+      if (navigator.mediaDevices?.addEventListener) {
+        navigator.mediaDevices.addEventListener("devicechange", () => {
+          loadCameraDevices(selectedCameraId);
+        });
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Команда CT — Камеры</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: #050505;
+      color: #ffd93d;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .wrapper {
+      flex: 1;
+      padding: 24px 32px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #teamStatus {
+      font-size: 0.9rem;
+      color: #f5f5f5;
+    }
+
+    #cameraGrid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      align-content: start;
+    }
+
+    .slot {
+      background: #111;
+      border: 2px solid rgba(255, 217, 61, 0.25);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 260px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    .slot.placeholder-only {
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    .frame {
+      position: relative;
+      flex: 1;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .placeholder {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      background: rgba(0, 0, 0, 0.6);
+      color: rgba(255, 217, 61, 0.8);
+    }
+
+    .slot.no-feed .placeholder,
+    .slot.placeholder-only .placeholder {
+      display: flex;
+    }
+
+    .slot.no-feed img {
+      opacity: 0;
+    }
+
+    .nick {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 720px) {
+      .wrapper {
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 1.6rem;
+      }
+    }
+  </style>
+</head>
+<body data-team="CT">
+  <div class="wrapper">
+    <h1 id="teamLabel">Команда CT</h1>
+    <div id="teamStatus"></div>
+    <div id="cameraGrid"></div>
+  </div>
+
+  <script>
+    window.TEAM_KEY = "CT";
+  </script>
+  <script src="team-common.js"></script>
+</body>
+</html>

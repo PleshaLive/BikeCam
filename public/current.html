@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Current Focus Feed</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #000;
+    }
+
+    #feed {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+    }
+
+    #playerName {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 32px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #ffd93d;
+      border-radius: 999px;
+      font-size: 1.5rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      min-width: 220px;
+      text-align: center;
+      backdrop-filter: blur(6px);
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <img id="feed" alt="Текущий игрок" />
+    <div id="playerName">—</div>
+  </div>
+
+  <script>
+    const img = document.getElementById("feed");
+    const nameBanner = document.getElementById("playerName");
+    const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+
+    let ws;
+    let lastFocus = null;
+    let lastUpdatedAt = 0;
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+      return response.json();
+    }
+
+    function setFocusLabel(value) {
+      nameBanner.textContent = value || "—";
+    }
+
+    function clearFrame() {
+      img.removeAttribute("src");
+      lastUpdatedAt = 0;
+    }
+
+    function applyFrame({ nickname, frame, updatedAt }) {
+      if (!frame) {
+        clearFrame();
+        return;
+      }
+
+      img.src = frame;
+
+      lastUpdatedAt = updatedAt || Date.now();
+      if (nickname) {
+        lastFocus = nickname;
+        setFocusLabel(nickname);
+      }
+    }
+
+    async function fetchFallbackFrame() {
+      if (!lastFocus) {
+        return;
+      }
+      try {
+        const cameraData = await fetchJson(`/camera/${encodeURIComponent(lastFocus)}`);
+        applyFrame({
+          nickname: cameraData.nickname || lastFocus,
+          frame: cameraData.frame,
+          updatedAt: cameraData.updatedAt,
+        });
+      } catch (error) {
+        clearFrame();
+      }
+    }
+
+    async function fetchFallbackFocus() {
+      try {
+        const focusData = await fetchJson("/current-focus");
+        const focus = focusData.currentFocus || null;
+        if (!focus) {
+          lastFocus = null;
+          clearFrame();
+          setFocusLabel(null);
+          return;
+        }
+        if (focus !== lastFocus) {
+          lastFocus = focus;
+          setFocusLabel(focus);
+          clearFrame();
+          await fetchFallbackFrame();
+        }
+      } catch (error) {
+        // ignore fallback failures
+      }
+    }
+
+    function connectWebSocket() {
+      ws = new WebSocket(wsUrl);
+
+      ws.addEventListener("message", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "WELCOME" || data.type === "STATE_UPDATE") {
+            if (data.currentFocus) {
+              const focusChanged = data.currentFocus !== lastFocus;
+              lastFocus = data.currentFocus;
+              setFocusLabel(data.currentFocus);
+              if (focusChanged) {
+                clearFrame();
+              }
+            } else {
+              lastFocus = null;
+              setFocusLabel(null);
+              clearFrame();
+            }
+            if (data.type === "STATE_UPDATE") {
+              fetchFallbackFrame();
+            }
+          }
+
+          if (data.type === "FOCUS_FRAME") {
+            applyFrame(data);
+          }
+        } catch (error) {
+          console.error("Failed to parse WS message", error);
+        }
+      });
+
+      ws.addEventListener("close", () => {
+        setTimeout(connectWebSocket, 2000);
+      });
+
+      ws.addEventListener("error", () => {
+        ws.close();
+      });
+    }
+
+    setInterval(fetchFallbackFocus, 3000);
+    connectWebSocket();
+    fetchFallbackFocus();
+  </script>
+</body>
+</html>

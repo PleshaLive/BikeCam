@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focus Control</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #101010;
+      color: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+
+    .panel {
+      width: 100%;
+      max-width: 720px;
+      background: #1c1c1c;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      text-transform: uppercase;
+      font-size: 1.4rem;
+      letter-spacing: 0.06em;
+    }
+
+    #currentFocus {
+      color: #ffd93d;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    button.player {
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: none;
+      background: #2a2a2a;
+      color: #f5f5f5;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    button.player:hover {
+      background: #3d3d3d;
+      transform: translateY(-1px);
+    }
+
+    button.player.active {
+      background: #ffd93d;
+      color: #121212;
+      font-weight: bold;
+    }
+
+    #refreshBtn {
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: none;
+      background: #ffd93d;
+      color: #121212;
+      cursor: pointer;
+      font-weight: bold;
+      margin-bottom: 16px;
+    }
+
+    .note {
+      margin: 0;
+      font-size: 0.85rem;
+      color: #a0a0a0;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>CURRENT FOCUS: <span id="currentFocus">—</span></h1>
+    <div class="buttons" id="playerButtons"></div>
+    <button id="refreshBtn" type="button">Обновить список игроков</button>
+    <p class="note">Используй кнопки, чтобы вручную выбрать игрока в эфире.</p>
+  </div>
+
+  <script>
+    const playerButtons = document.getElementById("playerButtons");
+    const currentFocusLabel = document.getElementById("currentFocus");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+
+    let currentFocus = null;
+    let ws;
+
+    async function loadPlayers() {
+      try {
+        const response = await fetch("/players", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Failed to load players");
+        }
+
+        const payload = await response.json();
+        renderPlayers(payload.players || []);
+      } catch (error) {
+        console.error("Не удалось получить список игроков", error);
+      }
+    }
+
+    function renderPlayers(players) {
+      playerButtons.innerHTML = "";
+      players.forEach((name) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "player";
+        button.textContent = name;
+        button.dataset.nickname = name;
+        button.addEventListener("click", () => setFocus(name));
+        playerButtons.appendChild(button);
+      });
+      highlightCurrent();
+    }
+
+    async function setFocus(nickname) {
+      try {
+        await fetch("/admin/focus", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname }),
+        });
+      } catch (error) {
+        console.error("Не удалось обновить фокус", error);
+      }
+    }
+
+    function updateFocusLabel(nickname) {
+      currentFocus = nickname || null;
+      currentFocusLabel.textContent = currentFocus || "—";
+      highlightCurrent();
+    }
+
+    function highlightCurrent() {
+      const buttons = playerButtons.querySelectorAll("button.player");
+      buttons.forEach((button) => {
+        if (button.dataset.nickname === currentFocus) {
+          button.classList.add("active");
+        } else {
+          button.classList.remove("active");
+        }
+      });
+    }
+
+    function connectWebSocket() {
+      ws = new WebSocket(wsUrl);
+
+      ws.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "STATE_UPDATE" || message.type === "WELCOME") {
+            updateFocusLabel(message.currentFocus);
+          }
+        } catch (error) {
+          console.error("Ошибка обработки WS-сообщения", error);
+        }
+      });
+
+      ws.addEventListener("close", () => {
+        setTimeout(connectWebSocket, 2000);
+      });
+
+      ws.addEventListener("error", () => {
+        ws.close();
+      });
+    }
+
+    refreshBtn.addEventListener("click", loadPlayers);
+
+    loadPlayers();
+    connectWebSocket();
+  </script>
+</body>
+</html>
