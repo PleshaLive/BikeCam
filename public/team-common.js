@@ -14,13 +14,18 @@
 	const teamKey = rawTeamKey;
 		const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Squad");
 		let activeTeamTitle = friendlyTitle;
+		let activeTeamLogo = "";
 
 	const titleElement = document.getElementById("teamLabel");
+	const logoElement = document.getElementById("teamLogo");
 	const gridElement = document.getElementById("cameraGrid");
 	const statusElement = document.getElementById("teamStatus");
 
 	if (titleElement) {
 			titleElement.textContent = friendlyTitle;
+	}
+	if (logoElement && !logoElement.getAttribute("src")) {
+		logoElement.style.display = "none";
 	}
 	function applyTeamTitle(nextTitle) {
 		if (!titleElement) {
@@ -35,6 +40,29 @@
 
 		activeTeamTitle = finalTitle;
 		titleElement.textContent = activeTeamTitle;
+		if (logoElement && activeTeamLogo) {
+			logoElement.alt = activeTeamTitle;
+		}
+	}
+
+	function applyTeamLogo(nextLogo) {
+		if (!logoElement) {
+			return;
+		}
+
+		const normalized = typeof nextLogo === "string" ? nextLogo.trim() : "";
+		if (!normalized) {
+			activeTeamLogo = "";
+			logoElement.removeAttribute("src");
+			logoElement.style.display = "none";
+			logoElement.alt = "";
+			return;
+		}
+
+		activeTeamLogo = normalized;
+		logoElement.src = normalized;
+		logoElement.alt = activeTeamTitle;
+		logoElement.style.display = "";
 	}
 
 
@@ -55,6 +83,7 @@
 	const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
 	const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 	const MAX_PLAYERS = 5;
+	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
 	let ws = null;
 	let wsReady = false;
@@ -536,7 +565,40 @@
 		});
 	}
 
+	async function fetchScoreboardMeta() {
+		try {
+			const response = await fetch(SCOREBOARD_ENDPOINT, { cache: "no-store" });
+			if (!response.ok) {
+				throw new Error(`Scoreboard request failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+			const teams = Array.isArray(data?.teams) ? data.teams : [];
+			for (const entry of teams) {
+				if (!entry || typeof entry !== "object") {
+					continue;
+				}
+
+				const entryKey = typeof entry.team === "string" ? entry.team.toUpperCase() : "";
+				if (entryKey !== teamKey) {
+					continue;
+				}
+
+				const details = {
+					teamName: typeof entry.teamName === "string" ? entry.teamName.trim() : "",
+					logo: typeof entry.logo === "string" ? entry.logo.trim() : "",
+				};
+				return details;
+			}
+		} catch (error) {
+			return null;
+		}
+
+		return null;
+	}
+
 	async function fetchTeams() {
+		const scoreboardPromise = fetchScoreboardMeta().catch(() => null);
 		try {
 			const response = await fetch("/teams", { cache: "no-store" });
 			if (!response.ok) {
@@ -552,6 +614,14 @@
 			ensureStatus(teamPlayers.length ? "" : "Team roster is not available yet.");
 		} catch (error) {
 			ensureStatus("Failed to fetch team roster.");
+		}
+
+		const scoreboardMeta = await scoreboardPromise;
+		if (scoreboardMeta) {
+			if (scoreboardMeta.teamName) {
+				applyTeamTitle(scoreboardMeta.teamName);
+			}
+			applyTeamLogo(scoreboardMeta.logo);
 		}
 	}
 
