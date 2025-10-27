@@ -47,29 +47,58 @@
 
       let ws;
       let wsReady = false;
-      let desiredFocus = null;
+      let viewerRegistered = false;
       let reconnectTimer = null;
       let connectionCounter = 0;
-      let activePeer = null;
+
+      const knownPublishers = new Set();
+      const sessions = new Map();
+
+      let desiredFocus = null;
+      let displayedStream = null;
+      let displayedNickname = null;
+
+      function normalizeNickname(name) {
+        if (typeof name !== "string") {
+          return null;
+        }
+        const trimmed = name.trim();
+        return trimmed.length ? trimmed : null;
+      }
 
       function createConnectionId() {
         connectionCounter += 1;
         return `viewer-${Date.now()}-${connectionCounter}`;
       }
 
-      function setVideoStream(stream) {
-        const current = video.srcObject;
-        if (current && current !== stream) {
-          current.getTracks().forEach((track) => track.stop());
+      function setDisplay(stream, nickname) {
+        displayedStream = stream || null;
+        displayedNickname = nickname || null;
+
+        if (video.srcObject !== stream) {
+          video.srcObject = stream || null;
         }
+
         if (stream) {
-          video.srcObject = stream;
           video.style.opacity = "1";
           video.style.visibility = "visible";
         } else {
-          video.srcObject = null;
           video.style.opacity = "0";
           video.style.visibility = "hidden";
+        }
+      }
+
+      function updateDisplay() {
+        if (!desiredFocus) {
+          setDisplay(null, null);
+          return;
+        }
+
+        const session = sessions.get(desiredFocus);
+        if (session?.stream) {
+          setDisplay(session.stream, session.nickname);
+        } else {
+          setDisplay(null, null);
         }
       }
 
@@ -79,46 +108,97 @@
         }
       }
 
-      function cleanupPeer({ notify = true } = {}) {
-        if (!activePeer) {
+      function cleanupSession(nickname, { notify = true } = {}) {
+        const session = sessions.get(nickname);
+        if (!session) {
           return;
         }
 
-        const { nickname, connectionId, pc } = activePeer;
-        activePeer = null;
+        sessions.delete(nickname);
 
         if (notify && wsReady) {
-          sendSignal({ type: "VIEWER_STOP", nickname, connectionId });
+          sendSignal({
+            type: "VIEWER_STOP",
+            nickname,
+            connectionId: session.connectionId,
+          });
         }
 
         try {
-          pc.onicecandidate = null;
-          pc.ontrack = null;
-          pc.onconnectionstatechange = null;
-          pc.close();
+          session.pc.ontrack = null;
+          session.pc.onicecandidate = null;
+          session.pc.onconnectionstatechange = null;
+          session.pc.close();
         } catch (error) {
-          console.warn("Не удалось закрыть RTCPeerConnection", error);
+          console.warn("Не удалось закрыть peer", error);
         }
 
-        setVideoStream(null);
+        if (session.stream) {
+          session.stream.getTracks().forEach((track) => track.stop());
+        }
+
+        if (displayedNickname === nickname) {
+          setDisplay(null, null);
+        }
       }
 
-      async function startPeer(nickname) {
-        if (!wsReady) {
+      function cleanupAllSessions({ notify = false } = {}) {
+        for (const nickname of Array.from(sessions.keys())) {
+          cleanupSession(nickname, { notify });
+        }
+      }
+
+      function restartSession(nickname) {
+        if (!knownPublishers.has(nickname)) {
+          cleanupSession(nickname, { notify: true });
+          return;
+        }
+
+        const hadSession = sessions.has(nickname);
+        cleanupSession(nickname, { notify: true });
+
+        if (!viewerRegistered || !wsReady) {
+          return;
+        }
+
+        if (hadSession) {
+          Promise.resolve().then(() => startSession(nickname));
+        }
+      }
+
+      async function startSession(nickname) {
+        if (!viewerRegistered || !wsReady) {
+          return;
+        }
+
+        if (!knownPublishers.has(nickname)) {
+          return;
+        }
+
+        if (sessions.has(nickname)) {
           return;
         }
 
         const connectionId = createConnectionId();
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-
-        activePeer = { nickname, connectionId, pc };
-
-        setVideoStream(null);
+        const session = { nickname, connectionId, pc, stream: null };
+        sessions.set(nickname, session);
 
         pc.ontrack = (event) => {
-          const [stream] = event.streams;
-          if (stream) {
-            setVideoStream(stream);
+          const [stream] = event.streams || [];
+          if (!stream) {
+            return;
+          }
+
+          const current = sessions.get(nickname);
+          if (!current || current.connectionId !== connectionId) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+
+          current.stream = stream;
+          if (desiredFocus === nickname) {
+            setDisplay(stream, nickname);
           }
         };
 
@@ -135,7 +215,8 @@
         };
 
         pc.onconnectionstatechange = () => {
-          if (!activePeer || activePeer.connectionId !== connectionId) {
+          const current = sessions.get(nickname);
+          if (!current || current.connectionId !== connectionId) {
             return;
           }
 
@@ -144,8 +225,9 @@
           }
 
           if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-            cleanupPeer({ notify: true });
-            Promise.resolve().then(maybeStartPeer);
+            restartSession(nickname);
+          } else if (pc.connectionState === "closed") {
+            cleanupSession(nickname, { notify: false });
           }
         };
 
@@ -161,66 +243,106 @@
           });
         } catch (error) {
           console.error("Не удалось начать WebRTC-сессию", error);
-          cleanupPeer({ notify: true });
+          restartSession(nickname);
         }
       }
 
-      function maybeStartPeer() {
-        if (!wsReady || !desiredFocus) {
+      function syncSessions() {
+        if (!viewerRegistered || !wsReady) {
           return;
         }
 
-        if (activePeer && activePeer.nickname === desiredFocus) {
-          return;
+        for (const nickname of knownPublishers) {
+          if (!sessions.has(nickname)) {
+            startSession(nickname);
+          }
         }
 
-        if (activePeer) {
-          cleanupPeer({ notify: true });
+        for (const nickname of Array.from(sessions.keys())) {
+          if (!knownPublishers.has(nickname)) {
+            cleanupSession(nickname, { notify: true });
+          }
         }
 
-        startPeer(desiredFocus);
+        updateDisplay();
       }
 
       function handlePublisherAnswer(payload) {
-        if (!activePeer) {
+        const nickname = normalizeNickname(payload.nickname);
+        if (!nickname) {
           return;
         }
 
-        if (activePeer.connectionId !== payload.connectionId || activePeer.nickname !== payload.nickname) {
+        const session = sessions.get(nickname);
+        if (!session || session.connectionId !== payload.connectionId) {
           return;
         }
 
-        activePeer.pc.setRemoteDescription(payload.sdp).catch((error) => {
-          console.error("Не удалось применить answer от издателя", error);
-          cleanupPeer({ notify: true });
+        session.pc.setRemoteDescription(payload.sdp).catch((error) => {
+          console.error("Не удалось применить answer", error);
+          restartSession(nickname);
         });
       }
 
       async function handlePublisherCandidate(payload) {
-        if (!activePeer) {
+        const nickname = normalizeNickname(payload.nickname);
+        if (!nickname) {
           return;
         }
 
-        if (activePeer.connectionId !== payload.connectionId || activePeer.nickname !== payload.nickname) {
+        const session = sessions.get(nickname);
+        if (!session || session.connectionId !== payload.connectionId) {
           return;
         }
 
         try {
-          await activePeer.pc.addIceCandidate(payload.candidate || null);
+          await session.pc.addIceCandidate(payload.candidate || null);
         } catch (error) {
-          console.error("Ошибка ICE от издателя", error);
+          console.error("Ошибка ICE", error);
         }
       }
 
       function handleStreamUnavailable(payload) {
-        if (activePeer && activePeer.connectionId === payload.connectionId) {
-          cleanupPeer({ notify: false });
+        const nickname = normalizeNickname(payload.nickname);
+        if (!nickname) {
+          return;
         }
 
-        if (payload.nickname === desiredFocus) {
-          setVideoStream(null);
-          Promise.resolve().then(maybeStartPeer);
+        const session = sessions.get(nickname);
+        if (!session || session.connectionId !== payload.connectionId) {
+          return;
         }
+
+        restartSession(nickname);
+      }
+
+      function handleActivePublishers(list) {
+        knownPublishers.clear();
+
+        if (Array.isArray(list)) {
+          for (const name of list) {
+            const normalized = normalizeNickname(name);
+            if (normalized) {
+              knownPublishers.add(normalized);
+            }
+          }
+        }
+
+        if (desiredFocus && !knownPublishers.has(desiredFocus)) {
+          desiredFocus = null;
+        }
+
+        syncSessions();
+      }
+
+      function handleFocusUpdate(name) {
+        const normalized = normalizeNickname(name);
+        if (normalized === desiredFocus) {
+          return;
+        }
+
+        desiredFocus = normalized;
+        updateDisplay();
       }
 
       function handleMessage(event) {
@@ -234,21 +356,19 @@
 
         switch (payload.type) {
           case "WELCOME":
-          case "STATE_UPDATE": {
-            const focusName = typeof payload.currentFocus === "string" && payload.currentFocus.trim()
-              ? payload.currentFocus.trim()
-              : null;
-
-            if (focusName !== desiredFocus) {
-              desiredFocus = focusName;
-              if (!desiredFocus) {
-                cleanupPeer({ notify: true });
-                setVideoStream(null);
-              }
-            }
-            maybeStartPeer();
+            handleActivePublishers(payload.publishers);
+            handleFocusUpdate(payload.currentFocus);
             break;
-          }
+          case "STATE_UPDATE":
+            handleFocusUpdate(payload.currentFocus);
+            break;
+          case "VIEWER_REGISTERED":
+            viewerRegistered = true;
+            syncSessions();
+            break;
+          case "ACTIVE_PUBLISHERS":
+            handleActivePublishers(payload.publishers);
+            break;
           case "SIGNAL_PUBLISHER_ANSWER":
             handlePublisherAnswer(payload);
             break;
@@ -265,19 +385,32 @@
       }
 
       function connectWebSocket() {
+        if (ws) {
+          try {
+            ws.close();
+          } catch (error) {
+            // ignore
+          }
+        }
+
         ws = new WebSocket(wsUrl);
 
         ws.addEventListener("open", () => {
           wsReady = true;
+          viewerRegistered = false;
           sendSignal({ type: "HELLO", role: "viewer" });
-          maybeStartPeer();
+          syncSessions();
         });
 
         ws.addEventListener("message", handleMessage);
 
         ws.addEventListener("close", () => {
           wsReady = false;
-          cleanupPeer({ notify: false });
+          viewerRegistered = false;
+          knownPublishers.clear();
+          cleanupAllSessions({ notify: false });
+          setDisplay(null, null);
+
           if (reconnectTimer) {
             return;
           }
@@ -295,7 +428,7 @@
       connectWebSocket();
 
       window.addEventListener("beforeunload", () => {
-        cleanupPeer({ notify: true });
+        cleanupAllSessions({ notify: true });
       });
     });
   </script>

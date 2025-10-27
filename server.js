@@ -53,6 +53,17 @@ function broadcastState() {
   });
 }
 
+function getActivePublishers() {
+  return Array.from(publishers.keys()).sort((a, b) => a.localeCompare(b));
+}
+
+function broadcastPublisherList() {
+  broadcast({
+    type: "ACTIVE_PUBLISHERS",
+    publishers: getActivePublishers(),
+  });
+}
+
 function dropViewerEntry(nickname, viewerSocketId, connectionId) {
   if (!nickname) {
     return;
@@ -114,6 +125,8 @@ function detachPublisher(nickname, socket) {
     gsiState.currentFocus = null;
     broadcastState();
   }
+
+  broadcastPublisherList();
 }
 
 function stopViewerSubscription(meta, nickname, connectionId, notifyPublisher = true) {
@@ -259,12 +272,14 @@ function handleHello(socket, meta, payload) {
     meta.role = "publisher";
     meta.nickname = nickname;
     sendJson(socket, { type: "PUBLISHER_REGISTERED", nickname });
+    broadcastPublisherList();
     return;
   }
 
   if (role === "viewer" || role === "admin") {
     meta.role = role;
     sendJson(socket, { type: "VIEWER_REGISTERED", role });
+    sendJson(socket, { type: "ACTIVE_PUBLISHERS", publishers: getActivePublishers() });
     return;
   }
 
@@ -425,6 +440,7 @@ wss.on("connection", (socket) => {
     type: "WELCOME",
     socketId,
     currentFocus: gsiState.currentFocus,
+    publishers: getActivePublishers(),
   });
 
   socket.on("message", (rawMessage) => {
