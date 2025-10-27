@@ -23,7 +23,15 @@
       background: transparent;
     }
 
-    #feed {
+    .feed-stack {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .feed-layer {
+      position: absolute;
+      inset: 0;
       width: 0;
       height: 0;
       object-fit: cover;
@@ -34,12 +42,31 @@
 </head>
 <body>
   <div class="stage">
-    <video id="feed" autoplay playsinline muted></video>
+    <div class="feed-stack">
+      <video id="feedA" class="feed-layer" autoplay playsinline muted></video>
+      <video id="feedB" class="feed-layer" autoplay playsinline muted></video>
+    </div>
   </div>
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      const video = document.getElementById("feed");
+      const feedStack = document.querySelector(".feed-stack");
+      const videoLayers = Array.from(feedStack?.querySelectorAll(".feed-layer") || []);
+
+      while (feedStack && videoLayers.length < 2) {
+        const layer = document.createElement("video");
+        layer.autoplay = true;
+        layer.playsInline = true;
+        layer.muted = true;
+        layer.className = "feed-layer";
+        feedStack.appendChild(layer);
+        videoLayers.push(layer);
+      }
+
+      if (!feedStack || videoLayers.length < 2) {
+        console.error("Не удалось инициализировать слои видеопотока для фокусной страницы.");
+        return;
+      }
       const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
       const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -53,8 +80,10 @@
       const sessions = new Map();
 
       let desiredFocus = null;
-      let displayedStream = null;
-      let displayedNickname = null;
+  let displayedStream = null;
+  let displayedNickname = null;
+  let activeVideoIndex = 0;
+  let swapToken = 0;
 
       function normalizeNickname(name) {
         if (typeof name !== "string") {
@@ -69,33 +98,141 @@
         return `viewer-${Date.now()}-${connectionCounter}`;
       }
 
+      function playVideoSafe(video) {
+        const attempt = video.play?.();
+        if (!attempt || typeof attempt.then !== "function") {
+          return Promise.resolve();
+        }
+        return attempt.catch(() => {});
+      }
+
+      function waitForFirstFrame(video) {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.currentTime > 0) {
+          return Promise.resolve();
+        }
+
+        return new Promise((resolve) => {
+          let frameHandle = null;
+
+          const cleanup = () => {
+            video.removeEventListener("playing", onPlaying);
+            video.removeEventListener("timeupdate", onTimeUpdate);
+            if (frameHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
+              video.cancelVideoFrameCallback(frameHandle);
+            }
+          };
+
+          const finish = () => {
+            cleanup();
+            resolve();
+          };
+
+          const onPlaying = () => {
+            finish();
+          };
+
+          const onTimeUpdate = () => {
+            if (video.currentTime > 0) {
+              finish();
+            }
+          };
+
+          video.addEventListener("playing", onPlaying, { once: true });
+          video.addEventListener("timeupdate", onTimeUpdate);
+
+          if (typeof video.requestVideoFrameCallback === "function") {
+            frameHandle = video.requestVideoFrameCallback(() => {
+              finish();
+            });
+          }
+        });
+      }
+
+      function ensureVideoVisible(video) {
+        if (!video) {
+          return;
+        }
+        video.style.display = "block";
+        video.style.width = "100vw";
+        video.style.height = "100vh";
+        if (!video.style.zIndex) {
+          video.style.zIndex = "1";
+        }
+      }
+
+      function hideVideoLayer(video) {
+        if (!video) {
+          return;
+        }
+        video.pause?.();
+        video.srcObject = null;
+        video.style.display = "none";
+        video.style.width = "0";
+        video.style.height = "0";
+        video.style.zIndex = "0";
+      }
+
       function setDisplay(stream, nickname) {
         const nextStream = stream || null;
-        const isNewStream = video.srcObject !== nextStream;
 
-        displayedStream = nextStream;
-        displayedNickname = nickname || null;
-
-        if (isNewStream) {
-          video.srcObject = nextStream;
+        if (!nextStream) {
+          swapToken += 1;
+          displayedStream = null;
+          displayedNickname = null;
+          activeVideoIndex = 0;
+          for (const layer of videoLayers) {
+            hideVideoLayer(layer);
+          }
+          return;
         }
 
-        if (nextStream) {
-          if (video.style.display !== "block") {
-            video.style.display = "block";
-            video.style.width = "100vw";
-            video.style.height = "100vh";
+        if (displayedStream === nextStream) {
+          displayedNickname = nickname || displayedNickname;
+          ensureVideoVisible(videoLayers[activeVideoIndex]);
+          const activeLayer = videoLayers[activeVideoIndex];
+          if (activeLayer) {
+            activeLayer.style.zIndex = "2";
           }
-          const playAttempt = video.play?.();
-          if (playAttempt && typeof playAttempt.catch === "function") {
-            playAttempt.catch(() => {});
-          }
-        } else {
-          video.pause?.();
-          video.style.display = "none";
-          video.style.width = "0";
-          video.style.height = "0";
+          return;
         }
+
+        const targetIndex = displayedStream ? (activeVideoIndex === 0 ? 1 : 0) : activeVideoIndex;
+        const targetVideo = videoLayers[targetIndex];
+        const previousVideo = videoLayers[activeVideoIndex];
+        const currentToken = ++swapToken;
+
+        if (displayedStream) {
+          ensureVideoVisible(previousVideo);
+          previousVideo.style.zIndex = "2";
+        }
+        ensureVideoVisible(targetVideo);
+        targetVideo.style.zIndex = displayedStream ? "1" : "2";
+        if (targetVideo.srcObject !== nextStream) {
+          targetVideo.srcObject = nextStream;
+        }
+
+        playVideoSafe(targetVideo)
+          .then(() => waitForFirstFrame(targetVideo))
+          .then(() => {
+            if (currentToken !== swapToken) {
+              return;
+            }
+
+            const otherIndex = targetIndex === 0 ? 1 : 0;
+            const otherVideo = videoLayers[otherIndex];
+            if (otherVideo !== targetVideo) {
+              hideVideoLayer(otherVideo);
+            }
+
+            targetVideo.style.zIndex = "2";
+
+            displayedStream = nextStream;
+            displayedNickname = nickname || null;
+            activeVideoIndex = targetIndex;
+          })
+          .catch((error) => {
+            console.error("Не удалось отобразить поток", error);
+          });
       }
 
       function updateDisplay() {
