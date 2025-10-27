@@ -62,7 +62,7 @@
 		activeTeamLogo = normalized;
 		logoElement.src = normalized;
 		logoElement.alt = activeTeamTitle;
-		logoElement.style.display = "";
+		logoElement.style.display = "block";
 	}
 
 
