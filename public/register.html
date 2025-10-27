@@ -65,6 +65,11 @@
       display: none;
     }
 
+    #applySelectionBtn[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     video {
       width: 100%;
       border-radius: 8px;
@@ -98,6 +103,7 @@
       <option value="">— камера по умолчанию —</option>
     </select>
     <button id="cameraRefreshBtn" type="button">Обновить список камер</button>
+    <button id="applySelectionBtn" type="button" disabled>Применить выбор</button>
     <button id="startCameraBtn" type="button">Включить камеру</button>
 
     <video id="camPreview" autoplay playsinline muted></video>
@@ -111,6 +117,7 @@
           const refreshBtn = document.getElementById("refreshBtn");
           const cameraSelect = document.getElementById("cameraSelect");
           const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
+          const applySelectionBtn = document.getElementById("applySelectionBtn");
           const startCameraBtn = document.getElementById("startCameraBtn");
           const status = document.getElementById("status");
           const video = document.getElementById("camPreview");
@@ -128,6 +135,8 @@
           let selectedCameraId = "";
           let pendingDeviceId = "";
           let autoStartAttempted = false;
+          let lastAppliedNickname = "";
+          let lastAppliedCameraId = "";
 
           function peerKey(viewerSocketId, connectionId) {
             return `${viewerSocketId}:${connectionId}`;
@@ -166,6 +175,7 @@
 
               const payload = await response.json();
               populateSelect(payload.players || []);
+              updateApplyButtonState();
             } catch (error) {
               status.textContent = "Не удалось загрузить игроков. Попробуй обновить список позже.";
             }
@@ -190,6 +200,8 @@
             if (players.includes(currentValue)) {
               nicknameSelect.value = currentValue;
             }
+
+            updateApplyButtonState();
           }
 
           function sendSignal(payload) {
@@ -228,6 +240,25 @@
                 connectionId: session.connectionId,
                 nickname: session.nickname,
               });
+            }
+          }
+
+          function updateApplyButtonState() {
+            const nicknameReady = Boolean(selectedNickname);
+            const cameraReady = Boolean(selectedCameraId || currentStream);
+            const sameSelection = nicknameReady && cameraReady && selectedNickname === lastAppliedNickname && selectedCameraId === lastAppliedCameraId;
+
+            applySelectionBtn.disabled = !(nicknameReady && cameraReady);
+
+            if (applySelectionBtn.disabled) {
+              applySelectionBtn.textContent = "Применить выбор";
+              return;
+            }
+
+            if (sameSelection) {
+              applySelectionBtn.textContent = "Выбор применён";
+            } else {
+              applySelectionBtn.textContent = "Применить выбор";
             }
           }
 
@@ -377,6 +408,7 @@
               currentStream = null;
             }
             video.srcObject = null;
+            updateApplyButtonState();
           }
 
           function showStartButton(message) {
@@ -414,6 +446,7 @@
                 option.textContent = "Камера не найдена";
                 cameraSelect.appendChild(option);
                 cameraSelect.disabled = true;
+                updateApplyButtonState();
                 return;
               }
 
@@ -433,8 +466,11 @@
                 cameraSelect.selectedIndex = 0;
                 selectedCameraId = cameraSelect.value;
               }
+
+              updateApplyButtonState();
             } catch (error) {
               console.error("Не удалось получить список камер", error);
+              updateApplyButtonState();
             }
           }
 
@@ -479,10 +515,11 @@
               selectedCameraId = appliedDeviceId;
               pendingDeviceId = "";
               await loadCameraDevices(appliedDeviceId);
-              status.textContent = "Камера готова. Выбери свой ник, чтобы начать трансляцию.";
+              status.textContent = "Камера готова. Выбери ник и нажми \"Применить выбор\".";
               hideStartButton();
               setCameraControlsEnabled(true);
               ensurePublisherRegistration();
+              updateApplyButtonState();
             } catch (error) {
               console.error("getUserMedia error", error);
               stopCurrentStream();
@@ -494,12 +531,14 @@
               if (error?.code === "MEDIA_NOT_SUPPORTED") {
                 status.textContent = "Браузер не поддерживает доступ к камере. Попробуй современный браузер или HTTPS.";
                 showStartButton();
+                updateApplyButtonState();
                 return;
               }
 
               if (!hasSecureContext) {
                 status.textContent = "Для доступа к камере нужен HTTPS или запуск с localhost.";
                 showStartButton();
+                updateApplyButtonState();
                 return;
               }
 
@@ -508,6 +547,7 @@
                 status.textContent = "Не удалось запустить выбранную камеру. Пробуем стандартную...";
                 setTimeout(() => startStream(undefined, false), 200);
                 showStartButton();
+                updateApplyButtonState();
                 return;
               }
 
@@ -526,17 +566,18 @@
                 status.textContent = "Ошибка камеры: " + (error?.message || "Неизвестная ошибка");
                 showStartButton();
               }
+              updateApplyButtonState();
             }
           }
 
           nicknameSelect.addEventListener("change", () => {
             selectedNickname = nicknameSelect.value;
-            if (selectedNickname) {
-              status.textContent = `Камера привязана к нику ${selectedNickname}.`;
-            } else {
-              status.textContent = "Выбери свой ник, чтобы начать трансляцию.";
+            if (!selectedNickname) {
+              status.textContent = "Выбери свой ник и камеру, затем нажми \"Применить выбор\".";
+            } else if (selectedNickname !== lastAppliedNickname) {
+              status.textContent = `Выбрано: ${selectedNickname}. Не забудь нажать \"Применить выбор\".`;
             }
-            ensurePublisherRegistration();
+            updateApplyButtonState();
           });
 
           refreshBtn.addEventListener("click", () => {
@@ -545,15 +586,51 @@
 
           cameraSelect.addEventListener("change", () => {
             const deviceId = cameraSelect.value;
-            if (deviceId === selectedCameraId && currentStream) {
-              return;
-            }
             pendingDeviceId = deviceId || "";
-            startStream(deviceId || undefined);
+            if (currentStream && deviceId && deviceId !== selectedCameraId) {
+              startStream(deviceId);
+            }
+            if (!currentStream) {
+              selectedCameraId = pendingDeviceId;
+            }
+            if (selectedNickname && (selectedNickname !== lastAppliedNickname || (deviceId || "") !== lastAppliedCameraId)) {
+              status.textContent = "Настройки изменены. Нажми \"Применить выбор\".";
+            }
+            updateApplyButtonState();
           });
 
           cameraRefreshBtn.addEventListener("click", () => {
             loadCameraDevices();
+          });
+
+          applySelectionBtn.addEventListener("click", () => {
+            if (applySelectionBtn.disabled) {
+              return;
+            }
+
+            if (!selectedNickname) {
+              status.textContent = "Выбери ник, чтобы применить настройки.";
+              return;
+            }
+
+            if (!selectedCameraId && pendingDeviceId) {
+              selectedCameraId = pendingDeviceId;
+            }
+            if (!selectedCameraId) {
+              selectedCameraId = cameraSelect.value || "";
+            }
+
+            lastAppliedNickname = selectedNickname;
+            lastAppliedCameraId = selectedCameraId;
+
+            ensurePublisherRegistration();
+            updateApplyButtonState();
+
+            if (currentStream) {
+              status.textContent = `Настройки применены для ${selectedNickname}.`;
+            } else {
+              status.textContent = "Настройки сохранены. Включи камеру, чтобы начать трансляцию.";
+            }
           });
 
           startCameraBtn.addEventListener("click", () => {
@@ -564,6 +641,7 @@
 
           loadPlayers();
           setCameraControlsEnabled(true);
+          updateApplyButtonState();
 
           loadCameraDevices().catch(() => {
             status.textContent = "Не удалось получить список камер. Дай разрешение и попробуй снова.";
