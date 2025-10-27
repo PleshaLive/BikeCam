@@ -1,381 +1,529 @@
 (() => {
-  const TEAM_TITLES = {
-    CT: "Команда CT",
-    T: "Команда T",
-  };
+	const TEAM_TITLES = {
+		CT: "Команда CT",
+		T: "Команда T",
+	};
 
-  const rawTeamKey = (window.TEAM_KEY || document.body.dataset.team || new URLSearchParams(window.location.search).get("team") || "").toUpperCase();
-  const teamKey = rawTeamKey;
-  const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Команда");
+	const rawTeamKey = (
+		window.TEAM_KEY ||
+		document.body.dataset.team ||
+		new URLSearchParams(window.location.search).get("team") ||
+		""
+	).toUpperCase();
 
-  const titleElement = document.getElementById("teamLabel");
-  const gridElement = document.getElementById("cameraGrid");
-  const statusElement = document.getElementById("teamStatus");
+	const teamKey = rawTeamKey;
+	const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Команда");
 
-  if (titleElement) {
-    titleElement.textContent = friendlyTitle;
-  }
+	const titleElement = document.getElementById("teamLabel");
+	const gridElement = document.getElementById("cameraGrid");
+	const statusElement = document.getElementById("teamStatus");
 
-  if (!teamKey) {
-    if (statusElement) {
-      statusElement.textContent = "Команда не указана. Добавьте ?team=CT или задайте TEAM_KEY.";
-    }
-    return;
-  }
+	if (titleElement) {
+		titleElement.textContent = friendlyTitle;
+	}
 
-  const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
-  const MAX_PLAYERS = 5;
-  const lastFrames = new Map();
-  let slotElements = new Map();
-  let currentPlayers = [];
-  let currentPlayersKey = null;
-  let ws;
+	if (!teamKey) {
+		if (statusElement) {
+			statusElement.textContent = "Команда не указана. Добавьте ?team=CT или задайте TEAM_KEY.";
+		}
+		return;
+	}
 
-  function createSmoothImageUpdater(img) {
-  let activeUrl = null;
-    let inFlight = false;
-    let queuedFrame = null;
-  let lastFrame = null;
+	if (!gridElement) {
+		if (statusElement) {
+			statusElement.textContent = "Не найдена сетка камер.";
+		}
+		return;
+	}
 
-    function clear() {
-      if (activeUrl) {
-        URL.revokeObjectURL(activeUrl);
-        activeUrl = null;
-      }
-      img.removeAttribute("src");
-      lastFrame = null;
-    }
+	const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
+	const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+	const MAX_PLAYERS = 5;
 
-    async function decodeAndSwap(frame) {
-      try {
-        const response = await fetch(frame);
-        const blob = await response.blob();
-        await new Promise((resolve) => {
-          const temp = new Image();
-          const objectUrl = URL.createObjectURL(blob);
-          temp.onload = () => {
-            if (activeUrl) {
-              URL.revokeObjectURL(activeUrl);
-            }
-            activeUrl = objectUrl;
-            img.src = objectUrl;
-            temp.onload = null;
-            resolve();
-          };
-          temp.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            resolve();
-          };
-          temp.src = objectUrl;
-        });
-      } catch (error) {
-        console.error("Failed to decode team frame", error);
-        if (activeUrl) {
-          URL.revokeObjectURL(activeUrl);
-          activeUrl = null;
-        }
-        img.src = frame;
-      }
-    }
+	let ws = null;
+	let wsReady = false;
+	let viewerRegistered = false;
+	let reconnectTimer = null;
+	let connectionCounter = 0;
 
-    async function processQueue() {
-      while (queuedFrame) {
-        const frame = queuedFrame;
-        queuedFrame = null;
-        await decodeAndSwap(frame);
-      }
-    }
+	const knownPublishers = new Set();
+	const sessions = new Map();
+	const slots = new Map();
 
-    return {
-      update(frame) {
-        if (!frame) {
-          queuedFrame = null;
-          clear();
-          return;
-        }
+	let currentPlayers = [];
 
-        if (frame === lastFrame) {
-          return;
-        }
+	function normalizeNickname(value) {
+		if (typeof value !== "string") {
+			return null;
+		}
+		const trimmed = value.trim();
+		return trimmed.length ? trimmed : null;
+	}
 
-        queuedFrame = frame;
-        lastFrame = frame;
-        if (inFlight) {
-          return;
-        }
+	function ensureStatus(message = "") {
+		if (statusElement) {
+			statusElement.textContent = message;
+		}
+	}
 
-        inFlight = true;
-        processQueue().finally(() => {
-          inFlight = false;
-        });
-      },
-      dispose: clear,
-    };
-  }
+	function createConnectionId() {
+		connectionCounter += 1;
+		return `team-viewer-${Date.now()}-${connectionCounter}`;
+	}
 
-  function fetchJson(url) {
-    return fetch(url, { cache: "no-store" }).then((response) => {
-      if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-      }
-      return response.json();
-    });
-  }
+	function createPlayerSlot(nickname) {
+		const card = document.createElement("div");
+		card.className = "slot no-feed";
+		card.dataset.nickname = nickname;
 
-  function ensureStatus(message = "") {
-    if (!statusElement) {
-      return;
-    }
-    statusElement.textContent = message;
-  }
+		const frameWrapper = document.createElement("div");
+		frameWrapper.className = "frame";
 
-  function buildPlayerCard(nickname) {
-    const card = document.createElement("div");
-    card.className = "slot no-feed";
-    card.dataset.nickname = nickname;
+		const video = document.createElement("video");
+		video.autoplay = true;
+		video.playsInline = true;
+		video.muted = true;
 
-    const frameWrapper = document.createElement("div");
-    frameWrapper.className = "frame";
+		const placeholder = document.createElement("div");
+		placeholder.className = "placeholder";
+		placeholder.textContent = "Нет камеры";
 
-    const img = document.createElement("img");
-    img.alt = nickname;
+		const label = document.createElement("div");
+		label.className = "nick";
+		label.textContent = nickname;
 
-    const placeholder = document.createElement("div");
-    placeholder.className = "placeholder";
-    placeholder.textContent = "Нет камеры";
+		frameWrapper.appendChild(video);
+		frameWrapper.appendChild(placeholder);
+		card.appendChild(frameWrapper);
+		card.appendChild(label);
 
-    const label = document.createElement("div");
-    label.className = "nick";
-    label.textContent = nickname;
+		return { card, video, placeholder, label };
+	}
 
-    frameWrapper.appendChild(img);
-    frameWrapper.appendChild(placeholder);
-    card.appendChild(frameWrapper);
-    card.appendChild(label);
+	function createEmptySlot() {
+		const card = document.createElement("div");
+		card.className = "slot placeholder-only";
 
-    return { card, img, placeholder, label, renderer: createSmoothImageUpdater(img) };
-  }
+		const frameWrapper = document.createElement("div");
+		frameWrapper.className = "frame";
 
-  function buildEmptyCard() {
-    const card = document.createElement("div");
-    card.className = "slot placeholder-only";
+		const placeholder = document.createElement("div");
+		placeholder.className = "placeholder";
+		placeholder.textContent = "Ожидаем игрока";
 
-    const frameWrapper = document.createElement("div");
-    frameWrapper.className = "frame";
+		const label = document.createElement("div");
+		label.className = "nick";
+		label.textContent = "—";
 
-    const label = document.createElement("div");
-    label.className = "nick";
-    label.textContent = "—";
+		frameWrapper.appendChild(placeholder);
+		card.appendChild(frameWrapper);
+		card.appendChild(label);
 
-    const placeholder = document.createElement("div");
-    placeholder.className = "placeholder";
-    placeholder.textContent = "Ожидаем игрока";
+		return card;
+	}
 
-    frameWrapper.appendChild(placeholder);
-    card.appendChild(frameWrapper);
-    card.appendChild(label);
+	function detachSlot(nickname) {
+		const slot = slots.get(nickname);
+		if (!slot) {
+			return;
+		}
 
-    return card;
-  }
+		cleanupSession(nickname, { notify: true });
 
-  function renderPlayers(names) {
-    const limited = names.slice(0, MAX_PLAYERS);
-    const key = limited.join("|");
-    if (key === currentPlayersKey && limited.length === currentPlayers.length) {
-      return;
-    }
+		slots.delete(nickname);
+		if (slot.video?.srcObject) {
+			try {
+				slot.video.srcObject.getTracks().forEach((track) => track.stop());
+			} catch (error) {
+				// ignore cleanup errors
+			}
+		}
+		slot.card.remove();
+	}
 
-    currentPlayersKey = key;
-    currentPlayers = limited;
+	function renderPlayers(names) {
+		const limited = names.slice(0, MAX_PLAYERS);
+		const previous = currentPlayers.join("|");
+		const current = limited.join("|");
+		if (previous === current) {
+			return;
+		}
 
-    const fragment = document.createDocumentFragment();
-    const newSlotElements = new Map();
+		currentPlayers = limited;
 
-    for (const nickname of limited) {
-      const slot = buildPlayerCard(nickname);
-      fragment.appendChild(slot.card);
-      newSlotElements.set(nickname, slot);
+		const fragment = document.createDocumentFragment();
+		const newOrder = new Map();
 
-      const cached = lastFrames.get(nickname);
-      if (cached?.frame) {
-        slot.renderer.update(cached.frame);
-        slot.card.classList.remove("no-feed");
-      } else {
-        slot.card.classList.add("no-feed");
-        slot.renderer.dispose();
-      }
-    }
+		for (const nickname of limited) {
+			let slot = slots.get(nickname);
+			if (!slot) {
+				slot = createPlayerSlot(nickname);
+				slots.set(nickname, slot);
+			}
+			slot.label.textContent = nickname;
+			slot.card.dataset.nickname = nickname;
+			fragment.appendChild(slot.card);
+			newOrder.set(nickname, slot);
+		}
 
-    for (let i = limited.length; i < MAX_PLAYERS; i += 1) {
-      fragment.appendChild(buildEmptyCard());
-    }
+		for (let i = limited.length; i < MAX_PLAYERS; i += 1) {
+			fragment.appendChild(createEmptySlot());
+		}
 
-    for (const existing of slotElements.values()) {
-      if (existing?.renderer) {
-        existing.renderer.dispose();
-      }
-    }
+		gridElement.innerHTML = "";
+		gridElement.appendChild(fragment);
 
-    gridElement.innerHTML = "";
-    gridElement.appendChild(fragment);
-    slotElements = newSlotElements;
-  }
+		for (const nickname of Array.from(slots.keys())) {
+			if (!newOrder.has(nickname)) {
+				detachSlot(nickname);
+			}
+		}
 
-  function updatePlayerFrame(nickname, frame, updatedAt) {
-    if (!nickname) {
-      return;
-    }
+		syncSessions();
+	}
 
-    if (frame) {
-      lastFrames.set(nickname, { frame, updatedAt: updatedAt || Date.now() });
-    } else {
-      lastFrames.delete(nickname);
-    }
+	function setSlotStream(nickname, stream) {
+		const slot = slots.get(nickname);
+		if (!slot) {
+			return;
+		}
 
-    const slot = slotElements.get(nickname);
-    if (!slot) {
-      if (!currentPlayers.includes(nickname) && currentPlayers.length < MAX_PLAYERS) {
-        const updatedList = [...currentPlayers, nickname];
-        renderPlayers(updatedList);
-        return updatePlayerFrame(nickname, frame, updatedAt);
-      }
-      return;
-    }
+		if (slot.video.srcObject !== stream) {
+			slot.video.srcObject = stream || null;
+		}
 
-    if (frame) {
-      slot.renderer.update(frame);
-      slot.card.classList.remove("no-feed");
-    } else {
-      slot.renderer.dispose();
-      slot.card.classList.add("no-feed");
-    }
-  }
+		if (stream) {
+			slot.card.classList.remove("no-feed");
+			slot.placeholder.style.display = "none";
+			slot.video.style.display = "block";
+		} else {
+			slot.card.classList.add("no-feed");
+			slot.placeholder.style.display = "";
+			slot.video.style.display = "none";
+		}
+	}
 
-  function handleWelcome(data) {
-    if (Array.isArray(data.cameras)) {
-      for (const snapshot of data.cameras) {
-        if (!snapshot || typeof snapshot.nickname !== "string") {
-          continue;
-        }
-        const snapshotTeam = typeof snapshot.team === "string" ? snapshot.team.toUpperCase() : null;
-        if (snapshotTeam && snapshotTeam !== teamKey) {
-          continue;
-        }
-        lastFrames.set(snapshot.nickname, {
-          frame: snapshot.frame,
-          updatedAt: snapshot.updatedAt,
-        });
-        updatePlayerFrame(snapshot.nickname, snapshot.frame, snapshot.updatedAt);
-      }
-    }
-  }
+	function cleanupSession(nickname, { notify = true } = {}) {
+		const session = sessions.get(nickname);
+		if (!session) {
+			return;
+		}
 
-  function handlePlayerFrame(data) {
-    if (!data || typeof data.nickname !== "string") {
-      return;
-    }
-    const dataTeam = typeof data.team === "string" ? data.team.toUpperCase() : null;
-    if (dataTeam && dataTeam !== teamKey) {
-      return;
-    }
-    if (!dataTeam && !currentPlayers.includes(data.nickname)) {
-      return;
-    }
-    updatePlayerFrame(data.nickname, data.frame, data.updatedAt);
-  }
+		sessions.delete(nickname);
 
-  function handleStateUpdate() {
-    fetchTeams();
-  }
+		if (notify && wsReady) {
+			sendSignal({
+				type: "VIEWER_STOP",
+				nickname,
+				connectionId: session.connectionId,
+			});
+		}
 
-  function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
+		try {
+			session.pc.ontrack = null;
+			session.pc.onicecandidate = null;
+			session.pc.onconnectionstatechange = null;
+			session.pc.close();
+		} catch (error) {
+			console.warn("Не удалось корректно закрыть peer", error);
+		}
 
-    ws.addEventListener("open", () => {
-      ensureStatus("");
-    });
+		if (session.stream) {
+			session.stream.getTracks().forEach((track) => track.stop());
+		}
 
-    ws.addEventListener("message", (event) => {
-      let payload;
-      try {
-        payload = JSON.parse(event.data);
-      } catch (error) {
-        return;
-      }
+		setSlotStream(nickname, null);
+	}
 
-      switch (payload.type) {
-        case "WELCOME":
-          handleWelcome(payload);
-          break;
-        case "STATE_UPDATE":
-          handleStateUpdate();
-          break;
-        case "PLAYER_FRAME":
-          handlePlayerFrame(payload);
-          break;
-        case "FOCUS_FRAME":
-          if (payload.nickname && currentPlayers.includes(payload.nickname)) {
-            updatePlayerFrame(payload.nickname, payload.frame, payload.updatedAt);
-          }
-          break;
-        default:
-          break;
-      }
-    });
+	function cleanupAllSessions({ notify = false } = {}) {
+		for (const nickname of Array.from(sessions.keys())) {
+			cleanupSession(nickname, { notify });
+		}
+	}
 
-    ws.addEventListener("close", () => {
-      ensureStatus("WebSocket отключён. Переподключаемся…");
-      setTimeout(connectWebSocket, 2000);
-    });
+	function sendSignal(payload) {
+		if (ws && ws.readyState === WebSocket.OPEN) {
+			ws.send(JSON.stringify(payload));
+		}
+	}
 
-    ws.addEventListener("error", () => {
-      ws.close();
-    });
-  }
+	function restartSession(nickname) {
+		const hadSession = sessions.has(nickname);
+		cleanupSession(nickname, { notify: true });
+		if (hadSession) {
+			Promise.resolve().then(() => startSession(nickname));
+		}
+	}
 
-  async function fetchTeams() {
-    try {
-      const data = await fetchJson("/teams");
-      const teamPlayers = data?.teams?.[teamKey] || [];
-      renderPlayers(teamPlayers);
-      ensureStatus(teamPlayers.length ? "" : "Состав команды пока не определён.");
-    } catch (error) {
-      ensureStatus("Не удалось получить состав команды.");
-    }
-  }
+	async function startSession(nickname) {
+		if (!viewerRegistered || !wsReady || !knownPublishers.has(nickname)) {
+			return;
+		}
 
-  async function fetchCameraSnapshot(nickname) {
-    if (!nickname) {
-      return;
-    }
-    try {
-      const data = await fetchJson(`/camera/${encodeURIComponent(nickname)}`);
-      updatePlayerFrame(data.nickname || nickname, data.frame, data.updatedAt);
-    } catch (error) {
-      updatePlayerFrame(nickname, null, Date.now());
-    }
-  }
+		if (!currentPlayers.includes(nickname)) {
+			return;
+		}
 
-  setInterval(() => {
-    for (const nickname of currentPlayers) {
-      const cached = lastFrames.get(nickname);
-      const age = cached ? Date.now() - (cached.updatedAt || 0) : Infinity;
-      if (age > 2000) {
-        fetchCameraSnapshot(nickname);
-      }
-    }
-  }, 2000);
+		if (sessions.has(nickname)) {
+			return;
+		}
 
-  setInterval(fetchTeams, 5000);
+		const slot = slots.get(nickname);
+		if (!slot) {
+			return;
+		}
 
-  fetchTeams();
-  connectWebSocket();
+		const connectionId = createConnectionId();
+		const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+		const session = { nickname, connectionId, pc, stream: null };
+		sessions.set(nickname, session);
 
-  window.addEventListener("beforeunload", () => {
-    for (const slot of slotElements.values()) {
-      if (slot?.renderer) {
-        slot.renderer.dispose();
-      }
-    }
-  });
+		slot.card.classList.add("no-feed");
+		slot.placeholder.style.display = "";
+		slot.video.style.display = "none";
+
+		pc.ontrack = (event) => {
+			const [stream] = event.streams || [];
+			if (!stream) {
+				return;
+			}
+
+			const current = sessions.get(nickname);
+			if (!current || current.connectionId !== connectionId) {
+				stream.getTracks().forEach((track) => track.stop());
+				return;
+			}
+
+			current.stream = stream;
+			setSlotStream(nickname, stream);
+		};
+
+		pc.onicecandidate = (event) => {
+			if (!event.candidate) {
+				return;
+			}
+			sendSignal({
+				type: "VIEWER_ICE",
+				nickname,
+				connectionId,
+				candidate: event.candidate,
+			});
+		};
+
+		pc.onconnectionstatechange = () => {
+			const current = sessions.get(nickname);
+			if (!current || current.connectionId !== connectionId) {
+				return;
+			}
+
+			if (pc.connectionState === "connected") {
+				return;
+			}
+
+			if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+				restartSession(nickname);
+			} else if (pc.connectionState === "closed") {
+				cleanupSession(nickname, { notify: false });
+			}
+		};
+
+		try {
+			const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+			await pc.setLocalDescription(offer);
+
+			sendSignal({
+				type: "VIEWER_OFFER",
+				nickname,
+				connectionId,
+				sdp: pc.localDescription,
+			});
+		} catch (error) {
+			console.error("Не удалось создать оффер для", nickname, error);
+			restartSession(nickname);
+		}
+	}
+
+	function syncSessions() {
+		if (!viewerRegistered || !wsReady) {
+			return;
+		}
+
+		for (const nickname of currentPlayers) {
+			if (knownPublishers.has(nickname)) {
+				startSession(nickname);
+			} else {
+				cleanupSession(nickname, { notify: true });
+			}
+		}
+
+		for (const nickname of Array.from(sessions.keys())) {
+			if (!currentPlayers.includes(nickname)) {
+				cleanupSession(nickname, { notify: true });
+			}
+		}
+	}
+
+	function handlePublisherAnswer(payload) {
+		const nickname = normalizeNickname(payload.nickname);
+		if (!nickname) {
+			return;
+		}
+
+		const session = sessions.get(nickname);
+		if (!session || session.connectionId !== payload.connectionId) {
+			return;
+		}
+
+		session.pc.setRemoteDescription(payload.sdp).catch((error) => {
+			console.error("Не удалось применить answer", nickname, error);
+			restartSession(nickname);
+		});
+	}
+
+	async function handlePublisherCandidate(payload) {
+		const nickname = normalizeNickname(payload.nickname);
+		if (!nickname) {
+			return;
+		}
+
+		const session = sessions.get(nickname);
+		if (!session || session.connectionId !== payload.connectionId) {
+			return;
+		}
+
+		try {
+			await session.pc.addIceCandidate(payload.candidate || null);
+		} catch (error) {
+			console.error("Ошибка ICE", nickname, error);
+		}
+	}
+
+	function handleStreamUnavailable(payload) {
+		const nickname = normalizeNickname(payload.nickname);
+		if (!nickname) {
+			return;
+		}
+
+		const session = sessions.get(nickname);
+		if (!session || session.connectionId !== payload.connectionId) {
+			return;
+		}
+
+		restartSession(nickname);
+	}
+
+	function handleActivePublishers(list) {
+		knownPublishers.clear();
+		if (Array.isArray(list)) {
+			for (const name of list) {
+				const normalized = normalizeNickname(name);
+				if (normalized) {
+					knownPublishers.add(normalized);
+				}
+			}
+		}
+
+		syncSessions();
+	}
+
+	function handleMessage(event) {
+		let payload;
+
+		try {
+			payload = JSON.parse(event.data);
+		} catch (error) {
+			return;
+		}
+
+		switch (payload.type) {
+			case "WELCOME":
+				handleActivePublishers(payload.publishers);
+				viewerRegistered = false;
+				sendSignal({ type: "HELLO", role: "viewer" });
+				break;
+			case "VIEWER_REGISTERED":
+				viewerRegistered = true;
+				syncSessions();
+				break;
+			case "ACTIVE_PUBLISHERS":
+				handleActivePublishers(payload.publishers);
+				break;
+			case "SIGNAL_PUBLISHER_ANSWER":
+				handlePublisherAnswer(payload);
+				break;
+			case "SIGNAL_PUBLISHER_CANDIDATE":
+				handlePublisherCandidate(payload);
+				break;
+			case "STREAM_UNAVAILABLE":
+			case "STREAM_ENDED":
+				handleStreamUnavailable(payload);
+				break;
+			default:
+				break;
+		}
+	}
+
+	function connectWebSocket() {
+		if (ws) {
+			try {
+				ws.close();
+			} catch (error) {
+				// ignore
+			}
+		}
+
+		ws = new WebSocket(wsUrl);
+
+		ws.addEventListener("open", () => {
+			wsReady = true;
+			viewerRegistered = false;
+			ensureStatus("");
+			sendSignal({ type: "HELLO", role: "viewer" });
+		});
+
+		ws.addEventListener("message", handleMessage);
+
+		ws.addEventListener("close", () => {
+			wsReady = false;
+			viewerRegistered = false;
+			knownPublishers.clear();
+			cleanupAllSessions({ notify: false });
+			ensureStatus("WebSocket отключён. Переподключаемся…");
+
+			if (reconnectTimer) {
+				return;
+			}
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				connectWebSocket();
+			}, 2000);
+		});
+
+		ws.addEventListener("error", () => {
+			ws.close();
+		});
+	}
+
+	async function fetchTeams() {
+		try {
+			const response = await fetch("/teams", { cache: "no-store" });
+			if (!response.ok) {
+				throw new Error(`Request failed: ${response.status}`);
+			}
+			const data = await response.json();
+			const teamPlayers = Array.isArray(data?.teams?.[teamKey]) ? data.teams[teamKey] : [];
+			renderPlayers(teamPlayers);
+			ensureStatus(teamPlayers.length ? "" : "Состав команды пока не определён.");
+		} catch (error) {
+			ensureStatus("Не удалось получить состав команды.");
+		}
+	}
+
+	connectWebSocket();
+	fetchTeams();
+	setInterval(fetchTeams, 5000);
+
+	window.addEventListener("beforeunload", () => {
+		cleanupAllSessions({ notify: true });
+	});
 })();
