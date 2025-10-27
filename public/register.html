@@ -114,12 +114,21 @@
       const startCameraBtn = document.getElementById("startCameraBtn");
       const status = document.getElementById("status");
       const video = document.getElementById("camPreview");
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  const MAX_WIDTH = 960;
-  const JPEG_QUALITY = 0.9;
-  const FRAME_INTERVAL = 40; // ~25 fps keeps latency manageable on hosting
-  const MAX_BUFFERED_AMOUNT = 600 * 1024;
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      const MAX_WIDTH = 800;
+      const JPEG_QUALITY = 0.88;
+      const WEBP_QUALITY = 0.85;
+      const FRAME_INTERVAL = 80; // ~12 fps maintains smoothness but lowers bandwidth
+      const MAX_BUFFERED_AMOUNT = 400 * 1024;
+      const FORMAT_WEBP = (() => {
+        try {
+          const probe = canvas.toDataURL("image/webp");
+          return probe.startsWith("data:image/webp");
+        } catch (error) {
+          return false;
+        }
+      })();
 
       const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -309,7 +318,9 @@
           ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
 
           try {
-            const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+            const frame = FORMAT_WEBP
+              ? canvas.toDataURL("image/webp", WEBP_QUALITY)
+              : canvas.toDataURL("image/jpeg", JPEG_QUALITY);
             ws.send(
               JSON.stringify({
                 type: "CAM_FRAME",
