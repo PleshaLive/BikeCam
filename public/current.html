@@ -24,13 +24,11 @@
     }
 
     #feed {
-      width: 100vw;
-      height: 100vh;
+      width: 0;
+      height: 0;
       object-fit: cover;
       background: transparent;
-      transition: opacity 120ms ease;
-      opacity: 0;
-      visibility: hidden;
+      display: none;
     }
   </style>
 </head>
@@ -83,16 +81,20 @@
         }
 
         if (nextStream) {
-          video.style.opacity = "1";
-          video.style.visibility = "visible";
+          if (video.style.display !== "block") {
+            video.style.display = "block";
+            video.style.width = "100vw";
+            video.style.height = "100vh";
+          }
           const playAttempt = video.play?.();
           if (playAttempt && typeof playAttempt.catch === "function") {
             playAttempt.catch(() => {});
           }
         } else {
           video.pause?.();
-          video.style.opacity = "0";
-          video.style.visibility = "hidden";
+          video.style.display = "none";
+          video.style.width = "0";
+          video.style.height = "0";
         }
       }
 
