@@ -31,6 +31,88 @@
   let currentPlayersKey = null;
   let ws;
 
+  function createSmoothImageUpdater(img) {
+  let activeUrl = null;
+    let inFlight = false;
+    let queuedFrame = null;
+  let lastFrame = null;
+
+    function clear() {
+      if (activeUrl) {
+        URL.revokeObjectURL(activeUrl);
+        activeUrl = null;
+      }
+      img.removeAttribute("src");
+      lastFrame = null;
+    }
+
+    async function decodeAndSwap(frame) {
+      try {
+        const response = await fetch(frame);
+        const blob = await response.blob();
+        await new Promise((resolve) => {
+          const temp = new Image();
+          const objectUrl = URL.createObjectURL(blob);
+          temp.onload = () => {
+            if (activeUrl) {
+              URL.revokeObjectURL(activeUrl);
+            }
+            activeUrl = objectUrl;
+            img.src = objectUrl;
+            temp.onload = null;
+            resolve();
+          };
+          temp.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            resolve();
+          };
+          temp.src = objectUrl;
+        });
+      } catch (error) {
+        console.error("Failed to decode team frame", error);
+        if (activeUrl) {
+          URL.revokeObjectURL(activeUrl);
+          activeUrl = null;
+        }
+        img.src = frame;
+      }
+    }
+
+    async function processQueue() {
+      while (queuedFrame) {
+        const frame = queuedFrame;
+        queuedFrame = null;
+        await decodeAndSwap(frame);
+      }
+    }
+
+    return {
+      update(frame) {
+        if (!frame) {
+          queuedFrame = null;
+          clear();
+          return;
+        }
+
+        if (frame === lastFrame) {
+          return;
+        }
+
+        queuedFrame = frame;
+        lastFrame = frame;
+        if (inFlight) {
+          return;
+        }
+
+        inFlight = true;
+        processQueue().finally(() => {
+          inFlight = false;
+        });
+      },
+      dispose: clear,
+    };
+  }
+
   function fetchJson(url) {
     return fetch(url, { cache: "no-store" }).then((response) => {
       if (!response.ok) {
@@ -71,7 +153,7 @@
     card.appendChild(frameWrapper);
     card.appendChild(label);
 
-    return { card, img, placeholder, label };
+    return { card, img, placeholder, label, renderer: createSmoothImageUpdater(img) };
   }
 
   function buildEmptyCard() {
@@ -116,16 +198,22 @@
 
       const cached = lastFrames.get(nickname);
       if (cached?.frame) {
-        slot.img.src = cached.frame;
+        slot.renderer.update(cached.frame);
         slot.card.classList.remove("no-feed");
       } else {
         slot.card.classList.add("no-feed");
-        slot.img.removeAttribute("src");
+        slot.renderer.dispose();
       }
     }
 
     for (let i = limited.length; i < MAX_PLAYERS; i += 1) {
       fragment.appendChild(buildEmptyCard());
+    }
+
+    for (const existing of slotElements.values()) {
+      if (existing?.renderer) {
+        existing.renderer.dispose();
+      }
     }
 
     gridElement.innerHTML = "";
@@ -155,10 +243,10 @@
     }
 
     if (frame) {
-      slot.img.src = frame;
+      slot.renderer.update(frame);
       slot.card.classList.remove("no-feed");
     } else {
-      slot.img.removeAttribute("src");
+      slot.renderer.dispose();
       slot.card.classList.add("no-feed");
     }
   }
@@ -282,4 +370,12 @@
 
   fetchTeams();
   connectWebSocket();
+
+  window.addEventListener("beforeunload", () => {
+    for (const slot of slotElements.values()) {
+      if (slot?.renderer) {
+        slot.renderer.dispose();
+      }
+    }
+  });
 })();

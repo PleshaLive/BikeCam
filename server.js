@@ -14,8 +14,6 @@ let gsiState = {
   currentFocus: null,
 };
 
-let cameras = {};
-
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: "5mb" }));
@@ -23,38 +21,28 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+
 const clients = new Set();
+const socketMeta = new Map();
+const socketById = new Map();
+const publishers = new Map();
+let nextSocketId = 1;
+
 const PORT = process.env.PORT || 3000;
-const BACKPRESSURE_LIMIT = 600 * 1024;
 
-server.on("error", (error) => {
-  if (error?.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use. Stop the other service or set PORT to a free port.`);
-    process.exit(1);
-  }
-  console.error("HTTP server error:", error);
-});
-
-wss.on("error", (error) => {
-  if (error?.code === "EADDRINUSE") {
+function sendJson(target, payload) {
+  if (!target || target.readyState !== WebSocket.OPEN) {
     return;
   }
-  console.error("WebSocket server error:", error);
-});
+  target.send(JSON.stringify(payload));
+}
 
-function broadcast(payload, { dropIfBackedUp = false } = {}) {
+function broadcast(payload) {
   const message = JSON.stringify(payload);
-
   for (const client of clients) {
-    if (client.readyState !== WebSocket.OPEN) {
-      continue;
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
     }
-
-    if (dropIfBackedUp && client.bufferedAmount > BACKPRESSURE_LIMIT) {
-      continue;
-    }
-
-    client.send(message);
   }
 }
 
@@ -65,67 +53,95 @@ function broadcastState() {
   });
 }
 
-function broadcastFocusFrame(nickname) {
+function dropViewerEntry(nickname, viewerSocketId, connectionId) {
   if (!nickname) {
     return;
   }
 
-  const camera = cameras[nickname];
-  if (!camera) {
+  const entry = publishers.get(nickname);
+  if (!entry) {
     return;
   }
 
-  broadcast(
-    {
-      type: "FOCUS_FRAME",
-      nickname,
-      frame: camera.lastFrameBase64,
-      updatedAt: camera.updatedAt,
-    },
-    { dropIfBackedUp: true }
-  );
+  const viewerSet = entry.viewers.get(viewerSocketId);
+  if (!viewerSet) {
+    return;
+  }
 
-  broadcastCameraFrame(nickname);
+  viewerSet.delete(connectionId);
+  if (viewerSet.size === 0) {
+    entry.viewers.delete(viewerSocketId);
+  }
 }
 
-function findPlayerByNickname(nickname) {
+function detachPublisher(nickname, socket) {
   if (!nickname) {
-    return null;
+    return;
   }
 
-  for (const player of Object.values(gsiState.players)) {
-    if (player?.name === nickname) {
-      return player;
+  const entry = publishers.get(nickname);
+  if (!entry) {
+    return;
+  }
+
+  if (socket && entry.socket !== socket) {
+    return;
+  }
+
+  publishers.delete(nickname);
+
+  for (const [viewerSocketId, connectionIds] of entry.viewers.entries()) {
+    const viewerSocket = socketById.get(viewerSocketId);
+    if (!viewerSocket) {
+      continue;
+    }
+
+    for (const connectionId of connectionIds) {
+      sendJson(viewerSocket, {
+        type: "STREAM_ENDED",
+        nickname,
+        connectionId,
+      });
+
+      const viewerMeta = socketMeta.get(viewerSocket);
+      if (viewerMeta) {
+        viewerMeta.subscriptions.delete(connectionId);
+      }
     }
   }
 
-  return null;
-}
-
-function getTeamForNickname(nickname) {
-  const player = findPlayerByNickname(nickname);
-  if (!player?.team) {
-    return null;
+  if (gsiState.currentFocus === nickname) {
+    gsiState.currentFocus = null;
+    broadcastState();
   }
-  return player.team.toUpperCase();
 }
 
-function broadcastCameraFrame(nickname) {
-  const camera = cameras[nickname];
-  if (!camera) {
+function stopViewerSubscription(meta, nickname, connectionId, notifyPublisher = true) {
+  if (!meta || !connectionId) {
     return;
   }
 
-  broadcast(
-    {
-      type: "PLAYER_FRAME",
-      nickname,
-      frame: camera.lastFrameBase64,
-      updatedAt: camera.updatedAt,
-      team: getTeamForNickname(nickname),
-    },
-    { dropIfBackedUp: true }
-  );
+  if (meta.subscriptions.has(connectionId)) {
+    meta.subscriptions.delete(connectionId);
+  }
+
+  dropViewerEntry(nickname, meta.id, connectionId);
+
+  if (!notifyPublisher) {
+    return;
+  }
+
+  const entry = publishers.get(nickname);
+  if (!entry) {
+    return;
+  }
+
+  sendJson(entry.socket, {
+    type: "VIEWER_DISCONNECTED",
+    viewerSocketId: meta.id,
+    connectionId,
+    nickname,
+  });
 }
 
 app.post("/api/gsi", (req, res) => {
@@ -155,7 +171,6 @@ app.post("/api/gsi", (req, res) => {
   }
 
   broadcastState();
-  broadcastFocusFrame(gsiState.currentFocus);
   res.json({ ok: true });
 });
 
@@ -199,16 +214,8 @@ app.get("/teams", (req, res) => {
   res.json({ teams });
 });
 
-app.get("/camera/:nickname", (req, res) => {
-  const nickname = req.params.nickname;
-  const camera = cameras[nickname];
-
-  if (!camera) {
-    res.status(404).json({ error: "no camera for this player" });
-    return;
-  }
-
-  res.json({ nickname, frame: camera.lastFrameBase64, updatedAt: camera.updatedAt });
+app.get("/camera/:nickname", (_req, res) => {
+  res.status(410).json({ error: "camera snapshots are not available in the WebRTC build" });
 });
 
 app.post("/admin/focus", (req, res) => {
@@ -221,87 +228,289 @@ app.post("/admin/focus", (req, res) => {
 
   gsiState.currentFocus = nickname;
   broadcastState();
-  broadcastFocusFrame(gsiState.currentFocus);
   res.json({ ok: true, currentFocus: gsiState.currentFocus });
 });
+
+function handleHello(socket, meta, payload) {
+  const role = typeof payload.role === "string" ? payload.role.trim().toLowerCase() : "";
+
+  if (role === "publisher") {
+    const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+    if (!nickname) {
+      sendJson(socket, { type: "ERROR", message: "nickname is required for publisher" });
+      return;
+    }
+
+    if (meta.nickname && meta.nickname !== nickname) {
+      detachPublisher(meta.nickname, socket);
+    }
+
+    const existing = publishers.get(nickname);
+    if (existing && existing.socket !== socket) {
+      detachPublisher(nickname, existing.socket);
+    }
+
+    let entry = publishers.get(nickname);
+    if (!entry || entry.socket !== socket) {
+      entry = { socket, viewers: new Map() };
+      publishers.set(nickname, entry);
+    }
+
+    meta.role = "publisher";
+    meta.nickname = nickname;
+    sendJson(socket, { type: "PUBLISHER_REGISTERED", nickname });
+    return;
+  }
+
+  if (role === "viewer" || role === "admin") {
+    meta.role = role;
+    sendJson(socket, { type: "VIEWER_REGISTERED", role });
+    return;
+  }
+
+  sendJson(socket, { type: "ERROR", message: "unknown role" });
+}
+
+function handleViewerOffer(socket, meta, payload) {
+  const connectionId = payload.connectionId;
+  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+
+  if (!connectionId || !nickname) {
+    return;
+  }
+
+  const entry = publishers.get(nickname);
+  if (!entry) {
+    sendJson(socket, {
+      type: "STREAM_UNAVAILABLE",
+      nickname,
+      connectionId,
+    });
+    return;
+  }
+
+  meta.role = meta.role || "viewer";
+  if (!meta.subscriptions.has(connectionId)) {
+    meta.subscriptions.set(connectionId, nickname);
+  }
+
+  let viewerSet = entry.viewers.get(meta.id);
+  if (!viewerSet) {
+    viewerSet = new Set();
+    entry.viewers.set(meta.id, viewerSet);
+  }
+  viewerSet.add(connectionId);
+
+  sendJson(entry.socket, {
+    type: "SIGNAL_VIEWER_OFFER",
+    viewerSocketId: meta.id,
+    connectionId,
+    nickname,
+    sdp: payload.sdp,
+  });
+}
+
+function handleViewerIce(meta, payload) {
+  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+  const connectionId = payload.connectionId;
+
+  if (!nickname || !connectionId) {
+    return;
+  }
+
+  const entry = publishers.get(nickname);
+  if (!entry) {
+    return;
+  }
+
+  sendJson(entry.socket, {
+    type: "SIGNAL_VIEWER_CANDIDATE",
+    viewerSocketId: meta.id,
+    connectionId,
+    nickname,
+    candidate: payload.candidate,
+  });
+}
+
+function handleViewerStop(socket, meta, payload) {
+  const connectionId = payload.connectionId;
+  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+  if (!connectionId || !nickname) {
+    return;
+  }
+  stopViewerSubscription(meta, nickname, connectionId, true);
+}
+
+function handlePublisherAnswer(socket, meta, payload) {
+  const viewerSocketId = payload.viewerSocketId;
+  const connectionId = payload.connectionId;
+
+  if (!viewerSocketId || !connectionId) {
+    return;
+  }
+
+  const viewerSocket = socketById.get(viewerSocketId);
+  if (!viewerSocket) {
+    return;
+  }
+
+  sendJson(viewerSocket, {
+    type: "SIGNAL_PUBLISHER_ANSWER",
+    nickname: meta.nickname,
+    connectionId,
+    sdp: payload.sdp,
+  });
+}
+
+function handlePublisherIce(socket, meta, payload) {
+  const viewerSocketId = payload.viewerSocketId;
+  const connectionId = payload.connectionId;
+
+  if (!viewerSocketId || !connectionId) {
+    return;
+  }
+
+  const viewerSocket = socketById.get(viewerSocketId);
+  if (!viewerSocket) {
+    return;
+  }
+
+  sendJson(viewerSocket, {
+    type: "SIGNAL_PUBLISHER_CANDIDATE",
+    nickname: meta.nickname,
+    connectionId,
+    candidate: payload.candidate,
+  });
+}
+
+function handlePublisherPeerClosed(meta, payload) {
+  const viewerSocketId = payload.viewerSocketId;
+  const connectionId = payload.connectionId;
+  if (!viewerSocketId || !connectionId) {
+    return;
+  }
+
+  dropViewerEntry(meta.nickname, viewerSocketId, connectionId);
+
+  const viewerSocket = socketById.get(viewerSocketId);
+  if (viewerSocket) {
+    sendJson(viewerSocket, {
+      type: "STREAM_ENDED",
+      nickname: meta.nickname,
+      connectionId,
+    });
+
+    const viewerMeta = socketMeta.get(viewerSocket);
+    if (viewerMeta) {
+      viewerMeta.subscriptions.delete(connectionId);
+    }
+  }
+}
 
 wss.on("connection", (socket) => {
   clients.add(socket);
 
-  const cameraSnapshots = Object.entries(cameras).map(([nickname, camera]) => ({
-    nickname,
-    frame: camera.lastFrameBase64,
-    updatedAt: camera.updatedAt,
-    team: getTeamForNickname(nickname),
-  }));
+  const socketId = `ws-${nextSocketId++}`;
+  const meta = {
+    id: socketId,
+    role: null,
+    nickname: null,
+    subscriptions: new Map(),
+  };
 
-  socket.send(
-    JSON.stringify({
-      type: "WELCOME",
-      currentFocus: gsiState.currentFocus,
-      cameras: cameraSnapshots,
-    })
-  );
+  socketMeta.set(socket, meta);
+  socketById.set(socketId, socket);
 
-  if (gsiState.currentFocus) {
-    const camera = cameras[gsiState.currentFocus];
-    if (camera && socket.readyState === WebSocket.OPEN) {
-      socket.send(
-        JSON.stringify({
-          type: "FOCUS_FRAME",
-          nickname: gsiState.currentFocus,
-          frame: camera.lastFrameBase64,
-          updatedAt: camera.updatedAt,
-        })
-      );
-    }
-  }
+  sendJson(socket, {
+    type: "WELCOME",
+    socketId,
+    currentFocus: gsiState.currentFocus,
+  });
 
   socket.on("message", (rawMessage) => {
-    let message;
+    let payload;
 
     try {
-      message = JSON.parse(rawMessage.toString());
+      payload = JSON.parse(rawMessage.toString());
     } catch (error) {
       return;
     }
 
-    if (message?.type === "CAM_FRAME") {
-      const nickname = message.nickname;
-      const frame = message.frame;
-
-      if (typeof nickname === "string" && typeof frame === "string" && nickname.trim()) {
-        cameras[nickname] = {
-          lastFrameBase64: frame,
-          updatedAt: Date.now(),
-        };
-
-        if (gsiState.currentFocus === nickname) {
-          broadcastFocusFrame(nickname);
-        } else {
-          broadcastCameraFrame(nickname);
+    switch (payload?.type) {
+      case "HELLO":
+        handleHello(socket, meta, payload);
+        break;
+      case "VIEWER_OFFER":
+        handleViewerOffer(socket, meta, payload);
+        break;
+      case "VIEWER_ICE":
+        handleViewerIce(meta, payload);
+        break;
+      case "VIEWER_STOP":
+        handleViewerStop(socket, meta, payload);
+        break;
+      case "PUBLISHER_ANSWER":
+        if (meta.role === "publisher") {
+          handlePublisherAnswer(socket, meta, payload);
         }
-      }
-    }
-
-    if (message?.type === "SET_FOCUS") {
-      const nickname = message.nickname;
-
-      if (typeof nickname === "string" && nickname.trim()) {
-        gsiState.currentFocus = nickname;
-        broadcastState();
-        broadcastFocusFrame(gsiState.currentFocus);
-      }
+        break;
+      case "PUBLISHER_ICE":
+        if (meta.role === "publisher") {
+          handlePublisherIce(socket, meta, payload);
+        }
+        break;
+      case "PUBLISHER_PEER_CLOSED":
+        if (meta.role === "publisher") {
+          handlePublisherPeerClosed(meta, payload);
+        }
+        break;
+      default:
+        break;
     }
   });
 
   socket.on("close", () => {
     clients.delete(socket);
+
+    const metaInfo = socketMeta.get(socket);
+    if (!metaInfo) {
+      socketById.delete(socketId);
+      return;
+    }
+
+    if (metaInfo.role === "publisher" && metaInfo.nickname) {
+      detachPublisher(metaInfo.nickname, socket);
+    }
+
+    if (metaInfo.role === "viewer") {
+      const entries = Array.from(metaInfo.subscriptions.entries());
+      for (const [connectionId, nickname] of entries) {
+        stopViewerSubscription(metaInfo, nickname, connectionId, true);
+      }
+    }
+
+    socketMeta.delete(socket);
+    socketById.delete(socketId);
   });
 
   socket.on("error", (error) => {
     console.error("WebSocket error:", error);
   });
+});
+
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. Stop the other service or set PORT to a free port.`);
+    process.exit(1);
+  }
+  console.error("HTTP server error:", error);
+});
+
+wss.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    return;
+  }
+  console.error("WebSocket server error:", error);
 });
 
 server.listen(PORT, () => {

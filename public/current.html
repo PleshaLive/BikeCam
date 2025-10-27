@@ -47,132 +47,266 @@
 </head>
 <body>
   <div class="stage">
-    <img id="feed" alt="Текущий игрок" />
+    <video id="feed" autoplay playsinline muted controls></video>
     <div id="playerName">—</div>
   </div>
 
   <script>
-    const img = document.getElementById("feed");
-    const nameBanner = document.getElementById("playerName");
-    const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+    document.addEventListener("DOMContentLoaded", () => {
+      const video = document.getElementById("feed");
+      const nameBanner = document.getElementById("playerName");
+      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+      const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
-    let ws;
-    let lastFocus = null;
-    let lastUpdatedAt = 0;
+      let ws;
+      let wsReady = false;
+      let desiredFocus = null;
+      let reconnectTimer = null;
+      let connectionCounter = 0;
+      let activePeer = null;
 
-    async function fetchJson(url) {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-      }
-      return response.json();
-    }
-
-    function setFocusLabel(value) {
-      nameBanner.textContent = value || "—";
-    }
-
-    function clearFrame() {
-      img.removeAttribute("src");
-      lastUpdatedAt = 0;
-    }
-
-    function applyFrame({ nickname, frame, updatedAt }) {
-      if (!frame) {
-        clearFrame();
-        return;
+      function createConnectionId() {
+        connectionCounter += 1;
+        return `viewer-${Date.now()}-${connectionCounter}`;
       }
 
-      img.src = frame;
-
-      lastUpdatedAt = updatedAt || Date.now();
-      if (nickname) {
-        lastFocus = nickname;
-        setFocusLabel(nickname);
+      function setFocusLabel(name) {
+        nameBanner.textContent = name || "—";
       }
-    }
 
-    async function fetchFallbackFrame() {
-      if (!lastFocus) {
-        return;
+      function setVideoStream(stream) {
+        const current = video.srcObject;
+        if (current && current !== stream) {
+          current.getTracks().forEach((track) => track.stop());
+        }
+        video.srcObject = stream || null;
       }
-      try {
-        const cameraData = await fetchJson(`/camera/${encodeURIComponent(lastFocus)}`);
-        applyFrame({
-          nickname: cameraData.nickname || lastFocus,
-          frame: cameraData.frame,
-          updatedAt: cameraData.updatedAt,
-        });
-      } catch (error) {
-        clearFrame();
-      }
-    }
 
-    async function fetchFallbackFocus() {
-      try {
-        const focusData = await fetchJson("/current-focus");
-        const focus = focusData.currentFocus || null;
-        if (!focus) {
-          lastFocus = null;
-          clearFrame();
-          setFocusLabel(null);
+      function sendSignal(payload) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(payload));
+        }
+      }
+
+      function cleanupPeer({ notify = true } = {}) {
+        if (!activePeer) {
           return;
         }
-        if (focus !== lastFocus) {
-          lastFocus = focus;
-          setFocusLabel(focus);
-          clearFrame();
-          await fetchFallbackFrame();
+
+        const { nickname, connectionId, pc } = activePeer;
+        activePeer = null;
+
+        if (notify && wsReady) {
+          sendSignal({ type: "VIEWER_STOP", nickname, connectionId });
         }
-      } catch (error) {
-        // ignore fallback failures
-      }
-    }
 
-    function connectWebSocket() {
-      ws = new WebSocket(wsUrl);
-
-      ws.addEventListener("message", (event) => {
         try {
-          const data = JSON.parse(event.data);
-          if (data.type === "WELCOME" || data.type === "STATE_UPDATE") {
-            if (data.currentFocus) {
-              const focusChanged = data.currentFocus !== lastFocus;
-              lastFocus = data.currentFocus;
-              setFocusLabel(data.currentFocus);
-              if (focusChanged) {
-                clearFrame();
-              }
-            } else {
-              lastFocus = null;
-              setFocusLabel(null);
-              clearFrame();
-            }
-            if (data.type === "STATE_UPDATE") {
-              fetchFallbackFrame();
-            }
-          }
-
-          if (data.type === "FOCUS_FRAME") {
-            applyFrame(data);
-          }
+          pc.onicecandidate = null;
+          pc.ontrack = null;
+          pc.onconnectionstatechange = null;
+          pc.close();
         } catch (error) {
-          console.error("Failed to parse WS message", error);
+          console.warn("Не удалось закрыть RTCPeerConnection", error);
         }
-      });
 
-      ws.addEventListener("close", () => {
-        setTimeout(connectWebSocket, 2000);
-      });
+        setVideoStream(null);
+      }
 
-      ws.addEventListener("error", () => {
-        ws.close();
-      });
-    }
+      async function startPeer(nickname) {
+        if (!wsReady) {
+          return;
+        }
 
-    setInterval(fetchFallbackFocus, 3000);
-    connectWebSocket();
-    fetchFallbackFocus();
+        const connectionId = createConnectionId();
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+        activePeer = { nickname, connectionId, pc };
+
+        pc.ontrack = (event) => {
+          const [stream] = event.streams;
+          if (stream) {
+            setVideoStream(stream);
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (!event.candidate) {
+            return;
+          }
+          sendSignal({
+            type: "VIEWER_ICE",
+            nickname,
+            connectionId,
+            candidate: event.candidate,
+          });
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (!activePeer || activePeer.connectionId !== connectionId) {
+            return;
+          }
+
+          if (pc.connectionState === "connected") {
+            return;
+          }
+
+          if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+            cleanupPeer({ notify: true });
+            setTimeout(maybeStartPeer, 1500);
+          }
+        };
+
+        try {
+          const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+          await pc.setLocalDescription(offer);
+
+          sendSignal({
+            type: "VIEWER_OFFER",
+            nickname,
+            connectionId,
+            sdp: pc.localDescription,
+          });
+        } catch (error) {
+          console.error("Не удалось начать WebRTC-сессию", error);
+          cleanupPeer({ notify: true });
+        }
+      }
+
+      function maybeStartPeer() {
+        if (!wsReady || !desiredFocus) {
+          return;
+        }
+
+        if (activePeer && activePeer.nickname === desiredFocus) {
+          return;
+        }
+
+        if (activePeer) {
+          cleanupPeer({ notify: true });
+        }
+
+        startPeer(desiredFocus);
+      }
+
+      function handlePublisherAnswer(payload) {
+        if (!activePeer) {
+          return;
+        }
+
+        if (activePeer.connectionId !== payload.connectionId || activePeer.nickname !== payload.nickname) {
+          return;
+        }
+
+        activePeer.pc.setRemoteDescription(payload.sdp).catch((error) => {
+          console.error("Не удалось применить answer от издателя", error);
+          cleanupPeer({ notify: true });
+        });
+      }
+
+      async function handlePublisherCandidate(payload) {
+        if (!activePeer) {
+          return;
+        }
+
+        if (activePeer.connectionId !== payload.connectionId || activePeer.nickname !== payload.nickname) {
+          return;
+        }
+
+        try {
+          await activePeer.pc.addIceCandidate(payload.candidate || null);
+        } catch (error) {
+          console.error("Ошибка ICE от издателя", error);
+        }
+      }
+
+      function handleStreamUnavailable(payload) {
+        if (activePeer && activePeer.connectionId === payload.connectionId) {
+          cleanupPeer({ notify: false });
+        }
+
+        if (payload.nickname === desiredFocus) {
+          setVideoStream(null);
+          setTimeout(maybeStartPeer, 2000);
+        }
+      }
+
+      function handleMessage(event) {
+        let payload;
+
+        try {
+          payload = JSON.parse(event.data);
+        } catch (error) {
+          return;
+        }
+
+        switch (payload.type) {
+          case "WELCOME":
+          case "STATE_UPDATE": {
+            const focusName = typeof payload.currentFocus === "string" && payload.currentFocus.trim()
+              ? payload.currentFocus.trim()
+              : null;
+
+            if (focusName !== desiredFocus) {
+              desiredFocus = focusName;
+              if (!desiredFocus) {
+                cleanupPeer({ notify: true });
+                setVideoStream(null);
+              }
+            }
+
+            setFocusLabel(desiredFocus);
+            maybeStartPeer();
+            break;
+          }
+          case "SIGNAL_PUBLISHER_ANSWER":
+            handlePublisherAnswer(payload);
+            break;
+          case "SIGNAL_PUBLISHER_CANDIDATE":
+            handlePublisherCandidate(payload);
+            break;
+          case "STREAM_UNAVAILABLE":
+          case "STREAM_ENDED":
+            handleStreamUnavailable(payload);
+            break;
+          default:
+            break;
+        }
+      }
+
+      function connectWebSocket() {
+        ws = new WebSocket(wsUrl);
+
+        ws.addEventListener("open", () => {
+          wsReady = true;
+          sendSignal({ type: "HELLO", role: "viewer" });
+          maybeStartPeer();
+        });
+
+        ws.addEventListener("message", handleMessage);
+
+        ws.addEventListener("close", () => {
+          wsReady = false;
+          cleanupPeer({ notify: false });
+          if (reconnectTimer) {
+            return;
+          }
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connectWebSocket();
+          }, 2000);
+        });
+
+        ws.addEventListener("error", () => {
+          ws.close();
+        });
+      }
+
+      connectWebSocket();
+
+      window.addEventListener("beforeunload", () => {
+        cleanupPeer({ notify: true });
+      });
+    });
   </script>
 </body>
 </html>

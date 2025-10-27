@@ -107,377 +107,492 @@
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      const nicknameSelect = document.getElementById("nicknameSelect");
-      const refreshBtn = document.getElementById("refreshBtn");
-      const cameraSelect = document.getElementById("cameraSelect");
-      const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
-      const startCameraBtn = document.getElementById("startCameraBtn");
-      const status = document.getElementById("status");
-      const video = document.getElementById("camPreview");
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      const MAX_WIDTH = 800;
-      const JPEG_QUALITY = 0.88;
-      const WEBP_QUALITY = 0.85;
-      const FRAME_INTERVAL = 80; // ~12 fps maintains smoothness but lowers bandwidth
-      const MAX_BUFFERED_AMOUNT = 400 * 1024;
-      const FORMAT_WEBP = (() => {
-        try {
-          const probe = canvas.toDataURL("image/webp");
-          return probe.startsWith("data:image/webp");
-        } catch (error) {
-          return false;
-        }
-      })();
+          const nicknameSelect = document.getElementById("nicknameSelect");
+          const refreshBtn = document.getElementById("refreshBtn");
+          const cameraSelect = document.getElementById("cameraSelect");
+          const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
+          const startCameraBtn = document.getElementById("startCameraBtn");
+          const status = document.getElementById("status");
+          const video = document.getElementById("camPreview");
 
-      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
-      const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+          const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+          const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+          const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
-      let ws;
-      let captureIntervalId = null;
-      let selectedNickname = "";
-      let currentStream = null;
-      let selectedCameraId = "";
-      let pendingDeviceId = "";
-      let autoStartAttempted = false;
+          const peers = new Map();
 
-  cameraSelect.disabled = false;
-  cameraRefreshBtn.disabled = false;
+          let ws;
+          let wsReady = false;
+          let selectedNickname = "";
+          let currentStream = null;
+          let selectedCameraId = "";
+          let pendingDeviceId = "";
+          let autoStartAttempted = false;
 
-      function mediaApisAvailable() {
-        return (
-          (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") ||
-          typeof navigator.getUserMedia === "function" ||
-          typeof navigator.webkitGetUserMedia === "function" ||
-          typeof navigator.mozGetUserMedia === "function"
-        );
-      }
-
-      async function requestStream(constraints) {
-        if (navigator.mediaDevices?.getUserMedia) {
-          return navigator.mediaDevices.getUserMedia(constraints);
-        }
-
-        const legacy = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-        if (legacy) {
-          return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
-        }
-
-        const error = new Error("MEDIA_NOT_SUPPORTED");
-        error.code = "MEDIA_NOT_SUPPORTED";
-        throw error;
-      }
-
-      async function loadPlayers() {
-        try {
-          const response = await fetch("/players", { cache: "no-store" });
-          if (!response.ok) {
-            throw new Error("Failed to load players");
+          function peerKey(viewerSocketId, connectionId) {
+            return `${viewerSocketId}:${connectionId}`;
           }
 
-          const payload = await response.json();
-          populateSelect(payload.players || []);
-        } catch (error) {
-          status.textContent = "Не удалось загрузить игроков. Попробуй обновить список позже.";
-        }
-      }
-
-      function populateSelect(players) {
-        const currentValue = nicknameSelect.value;
-        nicknameSelect.innerHTML = "";
-
-        const placeholder = document.createElement("option");
-        placeholder.value = "";
-        placeholder.textContent = "— выбери ник —";
-        nicknameSelect.appendChild(placeholder);
-
-        players.forEach((name) => {
-          const option = document.createElement("option");
-          option.value = name;
-          option.textContent = name;
-          nicknameSelect.appendChild(option);
-        });
-
-        if (players.includes(currentValue)) {
-          nicknameSelect.value = currentValue;
-        }
-      }
-
-      function stopCurrentStream() {
-        if (currentStream) {
-          currentStream.getTracks().forEach((track) => track.stop());
-          currentStream = null;
-        }
-        video.srcObject = null;
-      }
-
-      function showStartButton(message) {
-        if (message) {
-          status.textContent = message;
-        }
-        startCameraBtn.style.display = "block";
-        startCameraBtn.disabled = false;
-      }
-
-      function hideStartButton() {
-        startCameraBtn.style.display = "none";
-      }
-
-      function setCameraControlsEnabled(enabled) {
-        cameraSelect.disabled = !enabled;
-        cameraRefreshBtn.disabled = !enabled;
-      }
-
-      async function loadCameraDevices(preferredId = "") {
-        if (!navigator.mediaDevices?.enumerateDevices) {
-          return;
-        }
-
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = devices.filter((device) => device.kind === "videoinput");
-
-          const currentValue = preferredId || pendingDeviceId || selectedCameraId || cameraSelect.value;
-
-          cameraSelect.innerHTML = "";
-          if (videoInputs.length === 0) {
-            const option = document.createElement("option");
-            option.value = "";
-            option.textContent = "Камера не найдена";
-            cameraSelect.appendChild(option);
-            cameraSelect.disabled = true;
-            return;
+          function mediaApisAvailable() {
+            return (
+              (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") ||
+              typeof navigator.getUserMedia === "function" ||
+              typeof navigator.webkitGetUserMedia === "function" ||
+              typeof navigator.mozGetUserMedia === "function"
+            );
           }
 
-          cameraSelect.disabled = false;
+          async function requestStream(constraints) {
+            if (navigator.mediaDevices?.getUserMedia) {
+              return navigator.mediaDevices.getUserMedia(constraints);
+            }
 
-          videoInputs.forEach((device, index) => {
-            const option = document.createElement("option");
-            option.value = device.deviceId;
-            option.textContent = device.label || `Камера ${index + 1}`;
-            cameraSelect.appendChild(option);
+            const legacy = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            if (legacy) {
+              return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
+            }
+
+            const error = new Error("MEDIA_NOT_SUPPORTED");
+            error.code = "MEDIA_NOT_SUPPORTED";
+            throw error;
+          }
+
+          async function loadPlayers() {
+            try {
+              const response = await fetch("/players", { cache: "no-store" });
+              if (!response.ok) {
+                throw new Error("Failed to load players");
+              }
+
+              const payload = await response.json();
+              populateSelect(payload.players || []);
+            } catch (error) {
+              status.textContent = "Не удалось загрузить игроков. Попробуй обновить список позже.";
+            }
+          }
+
+          function populateSelect(players) {
+            const currentValue = nicknameSelect.value;
+            nicknameSelect.innerHTML = "";
+
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "— выбери ник —";
+            nicknameSelect.appendChild(placeholder);
+
+            players.forEach((name) => {
+              const option = document.createElement("option");
+              option.value = name;
+              option.textContent = name;
+              nicknameSelect.appendChild(option);
+            });
+
+            if (players.includes(currentValue)) {
+              nicknameSelect.value = currentValue;
+            }
+          }
+
+          function sendSignal(payload) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(payload));
+            }
+          }
+
+          function ensurePublisherRegistration() {
+            if (!wsReady || !selectedNickname || !currentStream) {
+              return;
+            }
+            sendSignal({ type: "HELLO", role: "publisher", nickname: selectedNickname });
+          }
+
+          function cleanupPeer(key, notifyServer = true) {
+            const session = peers.get(key);
+            if (!session) {
+              return;
+            }
+
+            peers.delete(key);
+
+            try {
+              session.pc.onicecandidate = null;
+              session.pc.onconnectionstatechange = null;
+              session.pc.close();
+            } catch (error) {
+              console.warn("Не удалось корректно закрыть peer", error);
+            }
+
+            if (notifyServer) {
+              sendSignal({
+                type: "PUBLISHER_PEER_CLOSED",
+                viewerSocketId: session.viewerSocketId,
+                connectionId: session.connectionId,
+                nickname: session.nickname,
+              });
+            }
+          }
+
+          function closeAllPeers() {
+            for (const key of Array.from(peers.keys())) {
+              cleanupPeer(key, true);
+            }
+          }
+
+          function buildPublisherPeer({ viewerSocketId, connectionId, nickname }) {
+            const key = peerKey(viewerSocketId, connectionId);
+            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            peers.set(key, { pc, viewerSocketId, connectionId, nickname });
+
+            if (currentStream) {
+              currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream));
+            }
+
+            pc.onicecandidate = (event) => {
+              if (!event.candidate) {
+                return;
+              }
+              sendSignal({
+                type: "PUBLISHER_ICE",
+                viewerSocketId,
+                connectionId,
+                candidate: event.candidate,
+              });
+            };
+
+            pc.onconnectionstatechange = () => {
+              if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+                cleanupPeer(key, pc.connectionState !== "closed");
+              }
+            };
+
+            return pc;
+          }
+
+          async function handleViewerOffer(payload) {
+            if (!currentStream) {
+              status.textContent = "Камера не запущена, нет чего отдавать зрителю.";
+              return;
+            }
+
+            const { viewerSocketId, connectionId, nickname, sdp } = payload;
+            const key = peerKey(viewerSocketId, connectionId);
+
+            if (peers.has(key)) {
+              cleanupPeer(key, true);
+            }
+
+            const pc = buildPublisherPeer({ viewerSocketId, connectionId, nickname });
+
+            try {
+              await pc.setRemoteDescription(sdp);
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+
+              sendSignal({
+                type: "PUBLISHER_ANSWER",
+                viewerSocketId,
+                connectionId,
+                sdp: pc.localDescription,
+              });
+            } catch (error) {
+              console.error("Не удалось обработать offer от зрителя", error);
+              status.textContent = "Ошибка WebRTC переговоров, попробуй обновить страницу.";
+              cleanupPeer(key, true);
+            }
+          }
+
+          async function handleViewerCandidate(payload) {
+            const { viewerSocketId, connectionId, candidate } = payload;
+            const key = peerKey(viewerSocketId, connectionId);
+            const session = peers.get(key);
+            if (!session) {
+              return;
+            }
+
+            try {
+              await session.pc.addIceCandidate(candidate || null);
+            } catch (error) {
+              console.error("Ошибка добавления ICE кандидата", error);
+            }
+          }
+
+          function handleViewerDisconnected(payload) {
+            const { viewerSocketId, connectionId } = payload;
+            cleanupPeer(peerKey(viewerSocketId, connectionId), false);
+          }
+
+          function startWebSocket() {
+            ws = new WebSocket(wsUrl);
+
+            ws.addEventListener("open", () => {
+              wsReady = true;
+              status.textContent = "Соединение с сервером установлено. Выбери ник и включи камеру.";
+              ensurePublisherRegistration();
+            });
+
+            ws.addEventListener("message", (event) => {
+              let payload;
+              try {
+                payload = JSON.parse(event.data);
+              } catch (error) {
+                return;
+              }
+
+              switch (payload.type) {
+                case "SIGNAL_VIEWER_OFFER":
+                  handleViewerOffer(payload);
+                  break;
+                case "SIGNAL_VIEWER_CANDIDATE":
+                  handleViewerCandidate(payload);
+                  break;
+                case "VIEWER_DISCONNECTED":
+                  handleViewerDisconnected(payload);
+                  break;
+                case "PUBLISHER_REGISTERED":
+                  status.textContent = `Камера ${payload.nickname} готова для зрителей.`;
+                  break;
+                case "ERROR":
+                  status.textContent = payload.message || "Ошибка сервера.";
+                  break;
+                default:
+                  break;
+              }
+            });
+
+            ws.addEventListener("close", () => {
+              wsReady = false;
+              closeAllPeers();
+              status.textContent = "Соединение закрыто. Переподключаемся…";
+              setTimeout(startWebSocket, 2000);
+            });
+
+            ws.addEventListener("error", () => {
+              status.textContent = "Ошибка соединения. Попробуй обновить страницу.";
+            });
+          }
+
+          function stopCurrentStream() {
+            closeAllPeers();
+            if (currentStream) {
+              currentStream.getTracks().forEach((track) => track.stop());
+              currentStream = null;
+            }
+            video.srcObject = null;
+          }
+
+          function showStartButton(message) {
+            if (message) {
+              status.textContent = message;
+            }
+            startCameraBtn.style.display = "block";
+            startCameraBtn.disabled = false;
+          }
+
+          function hideStartButton() {
+            startCameraBtn.style.display = "none";
+          }
+
+          function setCameraControlsEnabled(enabled) {
+            cameraSelect.disabled = !enabled;
+            cameraRefreshBtn.disabled = !enabled;
+          }
+
+          async function loadCameraDevices(preferredId = "") {
+            if (!navigator.mediaDevices?.enumerateDevices) {
+              return;
+            }
+
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const videoInputs = devices.filter((device) => device.kind === "videoinput");
+
+              const currentValue = preferredId || pendingDeviceId || selectedCameraId || cameraSelect.value;
+
+              cameraSelect.innerHTML = "";
+              if (videoInputs.length === 0) {
+                const option = document.createElement("option");
+                option.value = "";
+                option.textContent = "Камера не найдена";
+                cameraSelect.appendChild(option);
+                cameraSelect.disabled = true;
+                return;
+              }
+
+              cameraSelect.disabled = false;
+
+              videoInputs.forEach((device, index) => {
+                const option = document.createElement("option");
+                option.value = device.deviceId;
+                option.textContent = device.label || `Камера ${index + 1}`;
+                cameraSelect.appendChild(option);
+              });
+
+              const matched = videoInputs.some((device) => device.deviceId === currentValue);
+              if (matched) {
+                cameraSelect.value = currentValue;
+              } else {
+                cameraSelect.selectedIndex = 0;
+                selectedCameraId = cameraSelect.value;
+              }
+            } catch (error) {
+              console.error("Не удалось получить список камер", error);
+            }
+          }
+
+          async function startStream(deviceId, allowFallback = true) {
+            autoStartAttempted = true;
+            stopCurrentStream();
+
+            try {
+              const constraints = {
+                video: {
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 30 },
+                },
+                audio: false,
+              };
+
+              if (deviceId) {
+                constraints.video.deviceId = { exact: deviceId };
+              } else {
+                constraints.video.facingMode = { ideal: "user" };
+              }
+
+              const stream = await requestStream(constraints);
+              currentStream = stream;
+              video.srcObject = stream;
+
+              const activeTrack = stream.getVideoTracks()[0];
+              if (activeTrack?.applyConstraints) {
+                try {
+                  await activeTrack.applyConstraints({
+                    width: { ideal: 1280, max: 1280 },
+                    height: { ideal: 720, max: 720 },
+                    frameRate: { ideal: 30, max: 30 },
+                  });
+                } catch (applyError) {
+                  console.warn("Не удалось применить расширенные ограничения камеры", applyError);
+                }
+              }
+
+              const appliedDeviceId = activeTrack?.getSettings?.().deviceId || deviceId || "";
+              selectedCameraId = appliedDeviceId;
+              pendingDeviceId = "";
+              await loadCameraDevices(appliedDeviceId);
+              status.textContent = "Камера готова. Выбери свой ник, чтобы начать трансляцию.";
+              hideStartButton();
+              setCameraControlsEnabled(true);
+              ensurePublisherRegistration();
+            } catch (error) {
+              console.error("getUserMedia error", error);
+              stopCurrentStream();
+              setCameraControlsEnabled(true);
+
+              const errorName = error?.name || "";
+              const errorMessage = (error?.message || "").toLowerCase();
+
+              if (error?.code === "MEDIA_NOT_SUPPORTED") {
+                status.textContent = "Браузер не поддерживает доступ к камере. Попробуй современный браузер или HTTPS.";
+                showStartButton();
+                return;
+              }
+
+              if (!hasSecureContext) {
+                status.textContent = "Для доступа к камере нужен HTTPS или запуск с localhost.";
+                showStartButton();
+                return;
+              }
+
+              if (allowFallback && deviceId) {
+                pendingDeviceId = "";
+                status.textContent = "Не удалось запустить выбранную камеру. Пробуем стандартную...";
+                setTimeout(() => startStream(undefined, false), 200);
+                showStartButton();
+                return;
+              }
+
+              if (errorName === "NotAllowedError" || errorName === "SecurityError" || errorMessage.includes("gesture")) {
+                showStartButton("Нажми кнопку \"Включить камеру\" и разреши доступ к вебке.");
+              } else if (errorName === "NotFoundError") {
+                status.textContent = "Камера не найдена. Подключи устройство и нажми \"Включить камеру\".";
+                showStartButton();
+              } else if (errorName === "AbortError") {
+                status.textContent = "Не удалось запустить камеру. Попробуй снова.";
+                showStartButton();
+              } else if (errorName === "OverconstrainedError" || errorMessage.includes("start video source") || errorMessage.includes("could not start")) {
+                status.textContent = "Камера не может стартовать с текущими настройками. Попробуй выбрать другую камеру.";
+                showStartButton();
+              } else {
+                status.textContent = "Ошибка камеры: " + (error?.message || "Неизвестная ошибка");
+                showStartButton();
+              }
+            }
+          }
+
+          nicknameSelect.addEventListener("change", () => {
+            selectedNickname = nicknameSelect.value;
+            if (selectedNickname) {
+              status.textContent = `Камера привязана к нику ${selectedNickname}.`;
+            } else {
+              status.textContent = "Выбери свой ник, чтобы начать трансляцию.";
+            }
+            ensurePublisherRegistration();
           });
 
-          const matched = videoInputs.some((device) => device.deviceId === currentValue);
-          if (matched) {
-            cameraSelect.value = currentValue;
-          } else {
-            cameraSelect.selectedIndex = 0;
-            selectedCameraId = cameraSelect.value;
-          }
-        } catch (error) {
-          console.error("Не удалось получить список камер", error);
-        }
-      }
+          refreshBtn.addEventListener("click", () => {
+            loadPlayers();
+          });
 
-      function startWebSocket() {
-        ws = new WebSocket(wsUrl);
+          cameraSelect.addEventListener("change", () => {
+            const deviceId = cameraSelect.value;
+            if (deviceId === selectedCameraId && currentStream) {
+              return;
+            }
+            pendingDeviceId = deviceId || "";
+            startStream(deviceId || undefined);
+          });
 
-        ws.addEventListener("open", () => {
-          status.textContent = "Соединение с сервером установлено. Выбери ник, чтобы отправлять кадры.";
-          startCaptureLoop();
-        });
+          cameraRefreshBtn.addEventListener("click", () => {
+            loadCameraDevices();
+          });
 
-        ws.addEventListener("close", () => {
-          status.textContent = "Соединение закрыто. Перезагрузи страницу или скажи режиссёру.";
-          stopCaptureLoop();
-        });
+          startCameraBtn.addEventListener("click", () => {
+            startCameraBtn.disabled = true;
+            status.textContent = "Запрашиваем доступ к камере…";
+            startStream(pendingDeviceId || selectedCameraId || undefined);
+          });
 
-        ws.addEventListener("error", () => {
-          status.textContent = "Ошибка соединения. Попробуй обновить страницу.";
-        });
-      }
-
-      function startCaptureLoop() {
-        stopCaptureLoop();
-        captureIntervalId = setInterval(() => {
-          if (!selectedNickname || !ws || ws.readyState !== WebSocket.OPEN) {
-            return;
-          }
-
-          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-            return;
-          }
-
-          if (ws.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-            return;
-          }
-
-          const sourceWidth = video.videoWidth;
-          const sourceHeight = video.videoHeight;
-          if (!sourceWidth || !sourceHeight) {
-            return;
-          }
-
-          const scale = sourceWidth > MAX_WIDTH ? MAX_WIDTH / sourceWidth : 1;
-          const outputWidth = Math.round(sourceWidth * scale);
-          const outputHeight = Math.round(sourceHeight * scale);
-
-          canvas.width = outputWidth;
-          canvas.height = outputHeight;
-          ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
-
-          try {
-            const frame = FORMAT_WEBP
-              ? canvas.toDataURL("image/webp", WEBP_QUALITY)
-              : canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-            ws.send(
-              JSON.stringify({
-                type: "CAM_FRAME",
-                nickname: selectedNickname,
-                frame,
-              })
-            );
-          } catch (error) {
-            console.error("Failed to capture frame", error);
-          }
-        }, FRAME_INTERVAL);
-      }
-
-      function stopCaptureLoop() {
-        if (captureIntervalId !== null) {
-          clearInterval(captureIntervalId);
-          captureIntervalId = null;
-        }
-      }
-
-      async function startStream(deviceId, allowFallback = true) {
-        autoStartAttempted = true;
-        stopCurrentStream();
-
-        try {
-          const constraints = {
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 30 },
-            },
-            audio: false,
-          };
-
-          if (deviceId) {
-            constraints.video.deviceId = { exact: deviceId };
-          } else {
-            constraints.video.facingMode = { ideal: "user" };
-          }
-
-          const stream = await requestStream(constraints);
-          currentStream = stream;
-          video.srcObject = stream;
-          const activeTrack = stream.getVideoTracks()[0];
-          const appliedDeviceId = activeTrack?.getSettings?.().deviceId || deviceId || "";
-          selectedCameraId = appliedDeviceId;
-          pendingDeviceId = "";
-          await loadCameraDevices(appliedDeviceId);
-          status.textContent = "Камера готова. Выбери свой ник, чтобы начать трансляцию.";
-          hideStartButton();
-          setCameraControlsEnabled(true);
-        } catch (error) {
-          console.error("getUserMedia error", error);
-          stopCurrentStream();
+          loadPlayers();
           setCameraControlsEnabled(true);
 
-          const errorName = error?.name || "";
-          const errorMessage = (error?.message || "").toLowerCase();
+          loadCameraDevices().catch(() => {
+            status.textContent = "Не удалось получить список камер. Дай разрешение и попробуй снова.";
+          });
 
-          if (error?.code === "MEDIA_NOT_SUPPORTED") {
-            status.textContent = "Браузер не поддерживает доступ к камере. Попробуй современный браузер или HTTPS.";
-            showStartButton();
-            return;
-          }
-
-          if (!hasSecureContext) {
-            status.textContent = "Для доступа к камере нужен HTTPS или запуск с localhost.";
-            showStartButton();
-            return;
-          }
-
-          if (allowFallback && deviceId) {
-            pendingDeviceId = "";
-            status.textContent = "Не удалось запустить выбранную камеру. Пробуем стандартную...";
-            setTimeout(() => startStream(undefined, false), 200);
-            showStartButton();
-            return;
-          }
-
-          if (errorName === "NotAllowedError" || errorName === "SecurityError" || errorMessage.includes("gesture")) {
-            showStartButton("Нажми кнопку \"Включить камеру\" и разреши доступ к вебке.");
-          } else if (errorName === "NotFoundError") {
-            status.textContent = "Камера не найдена. Подключи устройство и нажми \"Включить камеру\".";
-            showStartButton();
-          } else if (errorName === "AbortError") {
-            status.textContent = "Не удалось запустить камеру. Попробуй снова.";
-            showStartButton();
-          } else if (errorName === "OverconstrainedError" || errorMessage.includes("start video source") || errorMessage.includes("could not start")) {
-            status.textContent = "Камера не может стартовать с текущими настройками. Попробуй выбрать другую камеру.";
+          if (!mediaApisAvailable()) {
+            status.textContent = "Браузер не поддерживает API камеры. Попробуй обновить браузер или открыть страницу в Chrome/Edge/Firefox.";
             showStartButton();
           } else {
-            status.textContent = "Ошибка камеры: " + (error?.message || "Неизвестная ошибка");
-            showStartButton();
+            setTimeout(() => {
+              if (autoStartAttempted || currentStream) {
+                return;
+              }
+              autoStartAttempted = true;
+              startStream();
+            }, 350);
           }
-        }
-      }
 
-      nicknameSelect.addEventListener("change", () => {
-        selectedNickname = nicknameSelect.value;
-        if (selectedNickname) {
-          status.textContent = `Отправляем кадры от ника ${selectedNickname}.`;
-        } else {
-          status.textContent = "Выбери свой ник, чтобы начать трансляцию.";
-        }
-      });
+          startWebSocket();
 
-      refreshBtn.addEventListener("click", () => {
-        loadPlayers();
-      });
-
-      cameraSelect.addEventListener("change", () => {
-        const deviceId = cameraSelect.value;
-        if (deviceId === selectedCameraId && currentStream) {
-          return;
-        }
-        pendingDeviceId = deviceId || "";
-        startStream(deviceId || undefined);
-      });
-
-      cameraRefreshBtn.addEventListener("click", () => {
-        loadCameraDevices();
-      });
-
-      startCameraBtn.addEventListener("click", () => {
-        startCameraBtn.disabled = true;
-        status.textContent = "Запрашиваем доступ к камере…";
-        startStream(pendingDeviceId || selectedCameraId || undefined);
-      });
-
-      loadPlayers();
-      setCameraControlsEnabled(true);
-
-      loadCameraDevices().catch(() => {
-        status.textContent = "Не удалось получить список камер. Дай разрешение и попробуй снова.";
-      });
-
-      if (!mediaApisAvailable()) {
-        status.textContent = "Браузер не поддерживает API камеры. Попробуй обновить браузер или открыть страницу в Chrome/Edge/Firefox.";
-        showStartButton();
-      } else {
-        setTimeout(() => {
-          if (autoStartAttempted || currentStream) {
-            return;
+          if (navigator.mediaDevices?.addEventListener) {
+            navigator.mediaDevices.addEventListener("devicechange", () => {
+              loadCameraDevices(selectedCameraId);
+            });
           }
-          autoStartAttempted = true;
-          startStream();
-        }, 350);
-      }
 
-      startWebSocket();
-
-      if (navigator.mediaDevices?.addEventListener) {
-        navigator.mediaDevices.addEventListener("devicechange", () => {
-          loadCameraDevices(selectedCameraId);
+          window.addEventListener("beforeunload", () => {
+            closeAllPeers();
+            stopCurrentStream();
+          });
         });
-      }
-    });
-  </script>
-</body>
-</html>
+      </script>
