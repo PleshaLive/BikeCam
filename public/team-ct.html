@@ -36,7 +36,8 @@
       display: flex;
       flex-direction: column;
       justify-content: center;
-      gap: 18px;
+      align-items: flex-start;
+      gap: 16px;
       z-index: 2;
       text-transform: uppercase;
     }
@@ -71,10 +72,10 @@
       position: absolute;
       width: 563px;
       height: 370px;
-  border-radius: 28px;
-  background: rgba(8, 12, 19, 0.6);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.6);
-      overflow: hidden;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      overflow: visible;
       pointer-events: none;
     }
 
@@ -109,8 +110,8 @@
       top: 1px;
       width: 564.65px;
       height: 317.54px;
-  background: rgba(0, 0, 0, 0.94);
-      border-radius: 24px;
+      background: rgba(0, 0, 0, 0.94);
+      border-radius: 0;
       overflow: hidden;
     }
 
@@ -146,9 +147,9 @@
 
     .slot .nick {
       position: absolute;
-      left: 0;
-      bottom: 0;
-      width: 100%;
+      left: 4px;
+      bottom: 10px;
+      width: calc(100% - 8px);
       height: 51.56px;
       display: flex;
       align-items: center;
@@ -159,8 +160,8 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #ffffff;
-  background: linear-gradient(180deg, rgba(8, 12, 19, 0.12) 0%, rgba(8, 12, 19, 0.9) 100%);
-  backdrop-filter: blur(6px);
+      background: transparent;
+      backdrop-filter: none;
     }
 
     .slot.placeholder-only .nick {
