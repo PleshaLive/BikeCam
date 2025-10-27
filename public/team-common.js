@@ -48,9 +48,9 @@
 
 	const knownPublishers = new Set();
 	const sessions = new Map();
-	const slots = new Map();
+		const slots = new Map();
 
-	let currentPlayers = [];
+		let currentPlayers = [];
 
 	function normalizeNickname(value) {
 		if (typeof value !== "string") {
@@ -83,6 +83,7 @@
 		video.autoplay = true;
 		video.playsInline = true;
 		video.muted = true;
+		video.style.display = "none";
 
 		const placeholder = document.createElement("div");
 		placeholder.className = "placeholder";
@@ -141,49 +142,60 @@
 		slot.card.remove();
 	}
 
-	function renderPlayers(names) {
-		const limited = names.slice(0, MAX_PLAYERS);
-		const previous = currentPlayers.join("|");
-		const current = limited.join("|");
-		if (previous === current) {
-			return;
-		}
-
-		currentPlayers = limited;
-
-		const fragment = document.createDocumentFragment();
-		const newOrder = new Map();
-
-		for (const nickname of limited) {
-			let slot = slots.get(nickname);
-			if (!slot) {
-				slot = createPlayerSlot(nickname);
-				slots.set(nickname, slot);
+		function renderPlayers(names) {
+				const prepared = [];
+				const seen = new Set();
+			for (const value of names) {
+				const normalized = normalizeNickname(value);
+				if (!normalized) {
+					continue;
+				}
+					if (seen.has(normalized)) {
+						continue;
+					}
+					seen.add(normalized);
+				prepared.push({ normalized, display: value });
+				if (prepared.length === MAX_PLAYERS) {
+					break;
+				}
 			}
-			slot.label.textContent = nickname;
-			slot.card.dataset.nickname = nickname;
-			fragment.appendChild(slot.card);
-			newOrder.set(nickname, slot);
-		}
 
-		for (let i = limited.length; i < MAX_PLAYERS; i += 1) {
-			fragment.appendChild(createEmptySlot());
-		}
+			const newOrderKeys = prepared.map((entry) => entry.normalized);
+			currentPlayers = newOrderKeys;
 
-		gridElement.innerHTML = "";
-		gridElement.appendChild(fragment);
+			const fragment = document.createDocumentFragment();
+			const newOrder = new Map();
 
-		for (const nickname of Array.from(slots.keys())) {
-			if (!newOrder.has(nickname)) {
-				detachSlot(nickname);
+			for (const entry of prepared) {
+				let slot = slots.get(entry.normalized);
+				if (!slot) {
+					slot = createPlayerSlot(entry.display);
+					slots.set(entry.normalized, slot);
+				}
+				slot.label.textContent = entry.display;
+				slot.card.dataset.nickname = entry.normalized;
+				fragment.appendChild(slot.card);
+				newOrder.set(entry.normalized, slot);
 			}
-		}
 
-		syncSessions();
+			for (let i = prepared.length; i < MAX_PLAYERS; i += 1) {
+				fragment.appendChild(createEmptySlot());
+			}
+
+			gridElement.innerHTML = "";
+			gridElement.appendChild(fragment);
+
+			for (const nickname of Array.from(slots.keys())) {
+				if (!newOrder.has(nickname)) {
+					detachSlot(nickname);
+				}
+			}
+
+			syncSessions();
 	}
 
 	function setSlotStream(nickname, stream) {
-		const slot = slots.get(nickname);
+			const slot = slots.get(nickname);
 		if (!slot) {
 			return;
 		}
@@ -193,9 +205,13 @@
 		}
 
 		if (stream) {
-			slot.card.classList.remove("no-feed");
-			slot.placeholder.style.display = "none";
-			slot.video.style.display = "block";
+					slot.card.classList.remove("no-feed");
+					slot.placeholder.style.display = "none";
+					slot.video.style.display = "block";
+					const attemptPlay = slot.video.play?.();
+					if (attemptPlay && typeof attemptPlay.catch === "function") {
+						attemptPlay.catch(() => {});
+					}
 		} else {
 			slot.card.classList.add("no-feed");
 			slot.placeholder.style.display = "";
@@ -268,7 +284,7 @@
 			return;
 		}
 
-		const slot = slots.get(nickname);
+			const slot = slots.get(nickname);
 		if (!slot) {
 			return;
 		}
