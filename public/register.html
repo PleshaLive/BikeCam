@@ -114,8 +114,12 @@
       const startCameraBtn = document.getElementById("startCameraBtn");
       const status = document.getElementById("status");
       const video = document.getElementById("camPreview");
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const MAX_WIDTH = 960;
+  const JPEG_QUALITY = 0.9;
+  const FRAME_INTERVAL = 40; // ~25 fps keeps latency manageable on hosting
+  const MAX_BUFFERED_AMOUNT = 600 * 1024;
 
       const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -286,16 +290,26 @@
             return;
           }
 
-          const targetWidth = 960;
-          const ratio = video.videoWidth ? video.videoHeight / video.videoWidth : 9 / 16;
-          const targetHeight = Math.max(1, Math.round(targetWidth * ratio));
+          if (ws.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+            return;
+          }
 
-          canvas.width = targetWidth;
-          canvas.height = targetHeight;
-          ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+          const sourceWidth = video.videoWidth;
+          const sourceHeight = video.videoHeight;
+          if (!sourceWidth || !sourceHeight) {
+            return;
+          }
+
+          const scale = sourceWidth > MAX_WIDTH ? MAX_WIDTH / sourceWidth : 1;
+          const outputWidth = Math.round(sourceWidth * scale);
+          const outputHeight = Math.round(sourceHeight * scale);
+
+          canvas.width = outputWidth;
+          canvas.height = outputHeight;
+          ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
 
           try {
-            const frame = canvas.toDataURL("image/jpeg", 0.92);
+            const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
             ws.send(
               JSON.stringify({
                 type: "CAM_FRAME",
@@ -306,7 +320,7 @@
           } catch (error) {
             console.error("Failed to capture frame", error);
           }
-        }, 33);
+        }, FRAME_INTERVAL);
       }
 
       function stopCaptureLoop() {

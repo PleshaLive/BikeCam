@@ -25,6 +25,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const clients = new Set();
 const PORT = process.env.PORT || 3000;
+const BACKPRESSURE_LIMIT = 600 * 1024;
 
 server.on("error", (error) => {
   if (error?.code === "EADDRINUSE") {
@@ -41,17 +42,27 @@ wss.on("error", (error) => {
   console.error("WebSocket server error:", error);
 });
 
+function broadcast(payload, { dropIfBackedUp = false } = {}) {
+  const message = JSON.stringify(payload);
+
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) {
+      continue;
+    }
+
+    if (dropIfBackedUp && client.bufferedAmount > BACKPRESSURE_LIMIT) {
+      continue;
+    }
+
+    client.send(message);
+  }
+}
+
 function broadcastState() {
-  const payload = JSON.stringify({
+  broadcast({
     type: "STATE_UPDATE",
     currentFocus: gsiState.currentFocus,
   });
-
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
-  }
 }
 
 function broadcastFocusFrame(nickname) {
@@ -64,18 +75,15 @@ function broadcastFocusFrame(nickname) {
     return;
   }
 
-  const payload = JSON.stringify({
-    type: "FOCUS_FRAME",
-    nickname,
-    frame: camera.lastFrameBase64,
-    updatedAt: camera.updatedAt,
-  });
-
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
-  }
+  broadcast(
+    {
+      type: "FOCUS_FRAME",
+      nickname,
+      frame: camera.lastFrameBase64,
+      updatedAt: camera.updatedAt,
+    },
+    { dropIfBackedUp: true }
+  );
 
   broadcastCameraFrame(nickname);
 }
@@ -108,19 +116,16 @@ function broadcastCameraFrame(nickname) {
     return;
   }
 
-  const payload = JSON.stringify({
-    type: "PLAYER_FRAME",
-    nickname,
-    frame: camera.lastFrameBase64,
-    updatedAt: camera.updatedAt,
-    team: getTeamForNickname(nickname),
-  });
-
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
-  }
+  broadcast(
+    {
+      type: "PLAYER_FRAME",
+      nickname,
+      frame: camera.lastFrameBase64,
+      updatedAt: camera.updatedAt,
+      team: getTeamForNickname(nickname),
+    },
+    { dropIfBackedUp: true }
+  );
 }
 
 app.post("/api/gsi", (req, res) => {
