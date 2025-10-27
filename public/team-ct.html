@@ -11,93 +11,136 @@
 
     body {
       margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: #050505;
-      color: #ffd93d;
       min-height: 100vh;
+      background: rgba(4, 4, 10, 0.95);
       display: flex;
-      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #ffffff;
+      font-family: "Blender Pro", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     }
 
-    .wrapper {
-      flex: 1;
-      padding: 24px 32px 40px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
+    .stage {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 2rem;
-      letter-spacing: 0.08em;
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(12, 17, 31, 0.8) 0%, rgba(8, 12, 19, 0.6) 100%);
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .team-header {
+      position: absolute;
+      top: 62px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1142px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      z-index: 2;
       text-transform: uppercase;
     }
 
+    #teamLabel {
+      margin: 0;
+      font-weight: 900;
+      font-size: 110px;
+      line-height: 0.8256;
+      letter-spacing: 0.06em;
+      text-align: center;
+      white-space: nowrap;
+    }
+
     #teamStatus {
-      font-size: 0.9rem;
-      color: #f5f5f5;
+      font-size: 26px;
+      letter-spacing: 0.08em;
+      text-align: center;
+      min-height: 32px;
     }
 
     #cameraGrid {
-      flex: 1;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-      align-content: start;
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
     }
 
     .slot {
-      background: #111;
-      border: 2px solid rgba(255, 217, 61, 0.25);
-      border-radius: 16px;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-height: 260px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-    }
-
-    .slot.placeholder-only {
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-    }
-
-    .frame {
-      position: relative;
-      flex: 1;
-      background: #000;
-      border-radius: 12px;
+      position: absolute;
+      width: 563px;
+      height: 370px;
+      border-radius: 28px;
+      background: rgba(8, 12, 19, 0.72);
+      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.65);
       overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      pointer-events: none;
     }
 
-    .frame video,
-    .frame img {
+    .slot:nth-child(1) {
+      left: 74px;
+      top: 221px;
+    }
+
+    .slot:nth-child(2) {
+      left: 679px;
+      top: 221px;
+    }
+
+    .slot:nth-child(3) {
+      left: 1284px;
+      top: 221px;
+    }
+
+    .slot:nth-child(4) {
+      left: 356px;
+      top: 614px;
+    }
+
+    .slot:nth-child(5) {
+      left: 965px;
+      top: 614px;
+    }
+
+    .slot .frame {
+      position: absolute;
+      left: -1px;
+      top: 1px;
+      width: 564.65px;
+      height: 317.54px;
+      background: #000000;
+      border-radius: 24px;
+      overflow: hidden;
+    }
+
+    .slot video {
       width: 100%;
       height: 100%;
       object-fit: cover;
-    }
-
-    .frame video {
       display: none;
     }
 
-    .placeholder {
+    .slot .placeholder {
       position: absolute;
       inset: 0;
       display: none;
       align-items: center;
       justify-content: center;
-      text-transform: uppercase;
+      font-weight: 700;
+      font-size: 32px;
       letter-spacing: 0.08em;
-      font-weight: 600;
-      background: rgba(0, 0, 0, 0.6);
-      color: rgba(255, 217, 61, 0.8);
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.8);
+      background: rgba(0, 0, 0, 0.55);
     }
 
     .slot.no-feed .placeholder,
@@ -109,28 +152,44 @@
       opacity: 0;
     }
 
-    .nick {
-      font-size: 1.1rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
+    .slot .nick {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      height: 51.56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 43.47px;
+      line-height: 0.8256;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
+      color: #ffffff;
+      background: linear-gradient(180deg, rgba(8, 12, 19, 0.05) 0%, rgba(8, 12, 19, 0.85) 100%);
+      backdrop-filter: blur(6px);
     }
 
-    @media (max-width: 720px) {
-      .wrapper {
-        padding: 20px;
-      }
+    .slot.placeholder-only .nick {
+      opacity: 0.6;
+    }
 
-      h1 {
-        font-size: 1.6rem;
+    @media (max-width: 1920px) {
+      body {
+        transform: scale(calc(100vw / 1920));
+        transform-origin: top left;
+        height: 1080px;
       }
     }
   </style>
 </head>
 <body data-team="CT">
-  <div class="wrapper">
-    <h1 id="teamLabel">Команда CT</h1>
-    <div id="teamStatus"></div>
+  <div class="stage">
+    <div class="team-header">
+      <h1 id="teamLabel">Команда CT</h1>
+      <div id="teamStatus"></div>
+    </div>
     <div id="cameraGrid"></div>
   </div>
 

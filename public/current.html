@@ -72,17 +72,25 @@
       }
 
       function setDisplay(stream, nickname) {
-        displayedStream = stream || null;
+        const nextStream = stream || null;
+        const isNewStream = video.srcObject !== nextStream;
+
+        displayedStream = nextStream;
         displayedNickname = nickname || null;
 
-        if (video.srcObject !== stream) {
-          video.srcObject = stream || null;
+        if (isNewStream) {
+          video.srcObject = nextStream;
         }
 
-        if (stream) {
+        if (nextStream) {
           video.style.opacity = "1";
           video.style.visibility = "visible";
+          const playAttempt = video.play?.();
+          if (playAttempt && typeof playAttempt.catch === "function") {
+            playAttempt.catch(() => {});
+          }
         } else {
+          video.pause?.();
           video.style.opacity = "0";
           video.style.visibility = "hidden";
         }
@@ -90,14 +98,34 @@
 
       function updateDisplay() {
         if (!desiredFocus) {
-          setDisplay(null, null);
+          if (displayedStream) {
+            setDisplay(null, null);
+          }
           return;
         }
 
         const session = sessions.get(desiredFocus);
+
         if (session?.stream) {
-          setDisplay(session.stream, session.nickname);
-        } else {
+          if (displayedStream !== session.stream) {
+            setDisplay(session.stream, session.nickname);
+          }
+          return;
+        }
+
+        if (!sessions.has(desiredFocus)) {
+          if (displayedStream) {
+            setDisplay(null, null);
+          }
+          return;
+        }
+
+        if (displayedStream && displayedNickname !== desiredFocus) {
+          // Держим прошлый поток, пока новый не появится, чтобы избежать мигания.
+          return;
+        }
+
+        if (!displayedStream) {
           setDisplay(null, null);
         }
       }
