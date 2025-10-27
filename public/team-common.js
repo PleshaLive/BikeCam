@@ -12,15 +12,31 @@
 	).toUpperCase();
 
 	const teamKey = rawTeamKey;
-	const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Команда");
+		const friendlyTitle = window.TEAM_TITLE || TEAM_TITLES[teamKey] || (teamKey ? `Team ${teamKey}` : "Команда");
+		let activeTeamTitle = friendlyTitle;
 
 	const titleElement = document.getElementById("teamLabel");
 	const gridElement = document.getElementById("cameraGrid");
 	const statusElement = document.getElementById("teamStatus");
 
 	if (titleElement) {
-		titleElement.textContent = friendlyTitle;
+			titleElement.textContent = friendlyTitle;
 	}
+	function applyTeamTitle(nextTitle) {
+		if (!titleElement) {
+			return;
+		}
+
+		const normalized = normalizeNickname(nextTitle);
+		const finalTitle = normalized || friendlyTitle;
+		if (finalTitle === activeTeamTitle) {
+			return;
+		}
+
+		activeTeamTitle = finalTitle;
+		titleElement.textContent = activeTeamTitle;
+	}
+
 
 	if (!teamKey) {
 		if (statusElement) {
@@ -528,7 +544,11 @@
 			}
 			const data = await response.json();
 			const teamPlayers = Array.isArray(data?.teams?.[teamKey]) ? data.teams[teamKey] : [];
-			renderPlayers(teamPlayers);
+					if (data?.teamNames && typeof data.teamNames[teamKey] === "string") {
+						applyTeamTitle(data.teamNames[teamKey]);
+					}
+
+					renderPlayers(teamPlayers);
 			ensureStatus(teamPlayers.length ? "" : "Состав команды пока не определён.");
 		} catch (error) {
 			ensureStatus("Не удалось получить состав команды.");

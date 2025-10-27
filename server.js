@@ -12,6 +12,10 @@ const __dirname = path.dirname(__filename);
 let gsiState = {
   players: {},
   currentFocus: null,
+  teamNames: {
+    CT: null,
+    T: null,
+  },
 };
 
 const app = express();
@@ -183,6 +187,23 @@ app.post("/api/gsi", (req, res) => {
     gsiState.currentFocus = data.player.name;
   }
 
+  if (data.map && typeof data.map === "object") {
+    const mapInfo = data.map;
+    if (mapInfo.team_ct && typeof mapInfo.team_ct === "object") {
+      const ctName = mapInfo.team_ct.name;
+      if (typeof ctName === "string" && ctName.trim()) {
+        gsiState.teamNames.CT = ctName.trim();
+      }
+    }
+
+    if (mapInfo.team_t && typeof mapInfo.team_t === "object") {
+      const tName = mapInfo.team_t.name;
+      if (typeof tName === "string" && tName.trim()) {
+        gsiState.teamNames.T = tName.trim();
+      }
+    }
+  }
+
   broadcastState();
   res.json({ ok: true });
 });
@@ -224,7 +245,13 @@ app.get("/teams", (req, res) => {
     teams[teamKey].push(player.name);
   }
 
-  res.json({ teams });
+  res.json({
+    teams,
+    teamNames: {
+      CT: gsiState.teamNames.CT,
+      T: gsiState.teamNames.T,
+    },
+  });
 });
 
 app.get("/camera/:nickname", (_req, res) => {

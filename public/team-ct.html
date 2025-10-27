@@ -12,7 +12,7 @@
     body {
       margin: 0;
       min-height: 100vh;
-      background: rgba(4, 4, 10, 0.95);
+      background: transparent;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -27,25 +27,15 @@
       overflow: hidden;
     }
 
-    .stage::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(180deg, rgba(12, 17, 31, 0.8) 0%, rgba(8, 12, 19, 0.6) 100%);
-      mix-blend-mode: soft-light;
-      pointer-events: none;
-      z-index: 0;
-    }
-
     .team-header {
       position: absolute;
       top: 62px;
-      left: 50%;
-      transform: translateX(-50%);
+      left: calc(50% - 1142px / 2 - 95px);
       width: 1142px;
+      height: 156px;
       display: flex;
       flex-direction: column;
-      align-items: center;
+      justify-content: center;
       gap: 18px;
       z-index: 2;
       text-transform: uppercase;
@@ -57,14 +47,16 @@
       font-size: 110px;
       line-height: 0.8256;
       letter-spacing: 0.06em;
-      text-align: center;
+      display: flex;
+      align-items: center;
+      color: #ffffff;
       white-space: nowrap;
     }
 
     #teamStatus {
       font-size: 26px;
       letter-spacing: 0.08em;
-      text-align: center;
+      color: rgba(255, 255, 255, 0.8);
       min-height: 32px;
     }
 
@@ -79,9 +71,9 @@
       position: absolute;
       width: 563px;
       height: 370px;
-      border-radius: 28px;
-      background: rgba(8, 12, 19, 0.72);
-      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.65);
+  border-radius: 28px;
+  background: rgba(8, 12, 19, 0.6);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.6);
       overflow: hidden;
       pointer-events: none;
     }
@@ -117,7 +109,7 @@
       top: 1px;
       width: 564.65px;
       height: 317.54px;
-      background: #000000;
+  background: rgba(0, 0, 0, 0.94);
       border-radius: 24px;
       overflow: hidden;
     }
@@ -167,8 +159,8 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #ffffff;
-      background: linear-gradient(180deg, rgba(8, 12, 19, 0.05) 0%, rgba(8, 12, 19, 0.85) 100%);
-      backdrop-filter: blur(6px);
+  background: linear-gradient(180deg, rgba(8, 12, 19, 0.12) 0%, rgba(8, 12, 19, 0.9) 100%);
+  backdrop-filter: blur(6px);
     }
 
     .slot.placeholder-only .nick {
