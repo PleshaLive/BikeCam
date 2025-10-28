@@ -95,7 +95,11 @@
 
 		const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
 		const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
-		const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+		const params = new URLSearchParams(window.location.search || "");
+		const preferFallback = params.get("fallback") === "mjpeg";
+		const userAgent = (navigator.userAgent || "").toLowerCase();
+		const forceFallback = preferFallback || userAgent.includes("obs") || userAgent.includes("vmix");
+		const hasWebRTC = forceFallback ? false : window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
 		const retryCounts = new Map();
 		const fallbackNicknames = new Set();
 	const MAX_PLAYERS = 5;
@@ -358,6 +362,11 @@
 			return;
 		}
 
+		if (session.connectTimer) {
+			clearTimeout(session.connectTimer);
+			session.connectTimer = null;
+		}
+
 		sessions.delete(nickname);
 
 		if (notify && wsReady) {
@@ -473,8 +482,22 @@
 
 		const connectionId = createConnectionId();
 		const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-		const session = { nickname, connectionId, pc, stream: null };
+		const session = { nickname, connectionId, pc, stream: null, connectTimer: null };
 		sessions.set(nickname, session);
+
+		if (fallbackSettings.mjpeg) {
+			activateFallback(nickname);
+		}
+
+		const attempts = retryCounts.get(nickname) || 0;
+		const connectTimeout = Math.min(8000, 4000 + attempts * 500);
+		session.connectTimer = setTimeout(() => {
+			const current = sessions.get(nickname);
+			if (!current || current.connectionId !== connectionId) {
+				return;
+			}
+			restartSession(nickname, { failed: true });
+		}, connectTimeout);
 
 		slot.card.classList.add("no-feed");
 		slot.placeholder.style.display = "";
@@ -491,6 +514,14 @@
 				stream.getTracks().forEach((track) => track.stop());
 				return;
 			}
+
+			if (current.connectTimer) {
+				clearTimeout(current.connectTimer);
+				current.connectTimer = null;
+			}
+
+			retryCounts.set(nickname, 0);
+			deactivateFallback(nickname);
 
 			current.stream = stream;
 			setSlotStream(nickname, stream);
@@ -515,12 +546,20 @@
 			}
 
 			if (pc.connectionState === "connected") {
+				if (current.connectTimer) {
+					clearTimeout(current.connectTimer);
+					current.connectTimer = null;
+				}
 				retryCounts.set(nickname, 0);
 				deactivateFallback(nickname);
 				return;
 			}
 
 			if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+				if (current.connectTimer) {
+					clearTimeout(current.connectTimer);
+					current.connectTimer = null;
+				}
 				restartSession(nickname, { failed: true });
 			} else if (pc.connectionState === "closed") {
 				cleanupSession(nickname, { notify: false });
@@ -538,6 +577,10 @@
 				sdp: pc.localDescription,
 			});
 		} catch (error) {
+			if (session.connectTimer) {
+				clearTimeout(session.connectTimer);
+				session.connectTimer = null;
+			}
 			console.error("Failed to create offer for", nickname, error);
 			restartSession(nickname, { failed: true });
 		}
