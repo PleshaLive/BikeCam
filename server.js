@@ -569,16 +569,20 @@ function handleHello(socket, meta, payload) {
       return;
     }
 
+    const existing = publishers.get(nickname);
+    if (existing && existing.socket !== socket) {
+      sendJson(socket, {
+        type: "ERROR",
+        message: "Nickname already in use. Wait until it is released.",
+      });
+      return;
+    }
+
     if (meta.nickname && meta.nickname !== nickname) {
       detachPublisher(meta.nickname, socket);
     }
 
-    const existing = publishers.get(nickname);
-    if (existing && existing.socket !== socket) {
-      detachPublisher(nickname, existing.socket);
-    }
-
-    let entry = publishers.get(nickname);
+    let entry = existing;
     if (!entry || entry.socket !== socket) {
       entry = { socket, viewers: new Map() };
       publishers.set(nickname, entry);

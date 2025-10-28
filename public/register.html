@@ -16,6 +16,9 @@
       --border: rgba(109, 90, 208, 0.2);
       --text-main: #f5f2ff;
       --text-muted: rgba(245, 242, 255, 0.72);
+      --success: #5bd997;
+      --success-strong: #2eaf73;
+      --success-soft: rgba(91, 217, 151, 0.28);
     }
 
     body {
@@ -42,6 +45,11 @@
       border: 1px solid var(--border);
       box-shadow: 0 45px 90px rgba(11, 9, 22, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
       backdrop-filter: blur(12px);
+    }
+
+    .card.connected {
+      border-color: rgba(91, 217, 151, 0.75);
+      box-shadow: 0 55px 110px rgba(20, 40, 32, 0.65), inset 0 0 0 1px rgba(91, 217, 151, 0.35);
     }
 
     .brand-chip {
@@ -123,6 +131,11 @@
       transform: translateY(0);
     }
 
+    button.connected {
+      background: linear-gradient(145deg, var(--success), var(--success-strong));
+      box-shadow: 0 26px 52px rgba(25, 63, 44, 0.6);
+    }
+
     button.secondary {
       background: transparent;
       border: 1px solid rgba(109, 90, 208, 0.32);
@@ -202,6 +215,7 @@
           const startCameraBtn = document.getElementById("startCameraBtn");
           const status = document.getElementById("status");
           const video = document.getElementById("camPreview");
+          const card = document.querySelector(".card");
 
           const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
           const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
@@ -220,6 +234,7 @@
           let lastAppliedNickname = "";
           let lastAppliedCameraId = "";
           let knownPlayers = [];
+          let isConnected = false;
 
           function peerKey(viewerSocketId, connectionId) {
             return `${viewerSocketId}:${connectionId}`;
@@ -316,8 +331,6 @@
             }
 
             updateApplyButtonState();
-
-            updateApplyButtonState();
           }
 
           function sendSignal(payload) {
@@ -366,20 +379,39 @@
           function updateApplyButtonState() {
             const nicknameReady = Boolean(selectedNickname);
             const cameraReady = Boolean(selectedCameraId || currentStream);
-            const sameSelection = nicknameReady && cameraReady && selectedNickname === lastAppliedNickname && selectedCameraId === lastAppliedCameraId;
+            const sameSelection =
+              nicknameReady &&
+              cameraReady &&
+              selectedNickname === lastAppliedNickname &&
+              selectedCameraId === lastAppliedCameraId;
 
             applySelectionBtn.disabled = !(nicknameReady && cameraReady);
 
-            if (applySelectionBtn.disabled) {
+            if (!sameSelection && isConnected) {
+              setConnected(false);
+            }
+
+            if (!nicknameReady || !cameraReady) {
               applySelectionBtn.textContent = "Apply Selection";
               return;
             }
 
-            if (sameSelection) {
-              applySelectionBtn.textContent = "Selection Applied";
+            if (isConnected && sameSelection) {
+              applySelectionBtn.textContent = "Connected";
             } else {
               applySelectionBtn.textContent = "Apply Selection";
             }
+          }
+
+          function setConnected(state) {
+            if (isConnected === state) {
+              return;
+            }
+            isConnected = state;
+            if (card) {
+              card.classList.toggle("connected", state);
+            }
+            applySelectionBtn.classList.toggle("connected", state);
           }
 
           function updateTakenNicknames(list) {
@@ -394,6 +426,14 @@
             }
 
             populateSelect();
+
+            if (isConnected && lastAppliedNickname && !takenNicknames.has(lastAppliedNickname)) {
+              setConnected(false);
+              if (selectedNickname === lastAppliedNickname) {
+                status.textContent = "You were disconnected. Apply selection again.";
+              }
+              updateApplyButtonState();
+            }
           }
 
           function closeAllPeers() {
@@ -520,15 +560,25 @@
                 case "ACTIVE_PUBLISHERS":
                   updateTakenNicknames(payload.publishers);
                   break;
-                case "PUBLISHER_REGISTERED":
-                  status.textContent = `Camera ${payload.nickname} is live for viewers.`;
-                  if (payload.nickname) {
-                    takenNicknames.add(payload.nickname);
+                case "PUBLISHER_REGISTERED": {
+                  const nickname = payload.nickname;
+                  if (nickname === lastAppliedNickname) {
+                    status.textContent = `Camera ${nickname} is live for viewers.`;
+                    setConnected(true);
+                    updateApplyButtonState();
+                  }
+                  if (nickname) {
+                    takenNicknames.add(nickname);
                     populateSelect();
                   }
                   break;
+                }
                 case "ERROR":
                   status.textContent = payload.message || "Server error.";
+                  if ((payload.message || "").toLowerCase().includes("already in use")) {
+                    setConnected(false);
+                    updateApplyButtonState();
+                  }
                   break;
                 default:
                   break;
@@ -538,7 +588,9 @@
             ws.addEventListener("close", () => {
               wsReady = false;
               closeAllPeers();
+              setConnected(false);
               status.textContent = "Connection closed. Reconnecting...";
+              updateApplyButtonState();
               setTimeout(startWebSocket, 2000);
             });
 
@@ -554,6 +606,7 @@
               currentStream = null;
             }
             video.srcObject = null;
+            setConnected(false);
             updateApplyButtonState();
           }
 
@@ -723,6 +776,9 @@
             } else if (selectedNickname !== lastAppliedNickname) {
               status.textContent = `Selected ${selectedNickname}. Don't forget to press \"Apply Selection\".`;
             }
+            if (selectedNickname !== lastAppliedNickname) {
+              setConnected(false);
+            }
             updateApplyButtonState();
           });
 
@@ -741,6 +797,9 @@
             }
             if (selectedNickname && (selectedNickname !== lastAppliedNickname || (deviceId || "") !== lastAppliedCameraId)) {
               status.textContent = "Settings changed. Press \"Apply Selection\" to confirm.";
+            }
+            if ((deviceId || "") !== lastAppliedCameraId) {
+              setConnected(false);
             }
             updateApplyButtonState();
           });
@@ -766,8 +825,14 @@
               selectedCameraId = cameraSelect.value || "";
             }
 
+            const previousNickname = lastAppliedNickname;
+            const previousCameraId = lastAppliedCameraId;
             lastAppliedNickname = selectedNickname;
             lastAppliedCameraId = selectedCameraId;
+
+            if (previousNickname !== lastAppliedNickname || previousCameraId !== lastAppliedCameraId) {
+              setConnected(false);
+            }
 
             ensurePublisherRegistration();
             updateApplyButtonState();
