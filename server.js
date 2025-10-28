@@ -4,10 +4,122 @@ import { WebSocketServer, WebSocket } from "ws";
 import bodyParser from "body-parser";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
+import { promises as fsPromises } from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const OWNER_IP = "212.90.60.103";
+const ADMIN_DATA_DIR = path.join(__dirname, "data");
+const ADMIN_CONFIG_PATH = path.join(ADMIN_DATA_DIR, "admin-config.json");
+const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)(\.(25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
+
+let adminConfig = { allowedIps: [] };
+
+function normalizeIp(ip) {
+  if (!ip) {
+    return "";
+  }
+  if (ip.startsWith("::ffff:")) {
+    return ip.slice(7);
+  }
+  if (ip === "::1") {
+    return "127.0.0.1";
+  }
+  return ip;
+}
+
+function isValidIp(ip) {
+  return IPV4_REGEX.test(ip);
+}
+
+function ensureOwnerIp(config) {
+  if (!Array.isArray(config.allowedIps)) {
+    config.allowedIps = [];
+  }
+
+  const exists = config.allowedIps.some((entry) => normalizeIp(entry?.ip || entry) === OWNER_IP);
+  if (!exists) {
+    config.allowedIps.push({
+      ip: OWNER_IP,
+      label: "Primary owner",
+      addedAt: new Date().toISOString(),
+      addedBy: OWNER_IP,
+    });
+  }
+}
+
+function loadAdminConfig() {
+  try {
+    fs.mkdirSync(ADMIN_DATA_DIR, { recursive: true });
+  } catch (error) {
+    console.warn("Failed to prepare admin data directory", error);
+  }
+
+  let config = { allowedIps: [] };
+  if (fs.existsSync(ADMIN_CONFIG_PATH)) {
+    try {
+      const raw = fs.readFileSync(ADMIN_CONFIG_PATH, "utf-8");
+      config = JSON.parse(raw);
+    } catch (error) {
+      console.warn("Failed to parse admin config, using defaults", error);
+    }
+  }
+
+  if (!Array.isArray(config.allowedIps)) {
+    config.allowedIps = [];
+  }
+
+  config.allowedIps = config.allowedIps
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return {
+          ip: normalizeIp(entry),
+          label: "",
+          addedAt: new Date().toISOString(),
+          addedBy: "unknown",
+        };
+      }
+
+      const normalizedIp = normalizeIp(entry?.ip);
+      return {
+        ip: normalizedIp,
+        label: typeof entry?.label === "string" ? entry.label : "",
+        addedAt: entry?.addedAt || new Date().toISOString(),
+        addedBy: entry?.addedBy || "unknown",
+      };
+    })
+    .filter((entry) => entry.ip && isValidIp(entry.ip));
+
+  ensureOwnerIp(config);
+  adminConfig = config;
+
+  try {
+    fs.writeFileSync(ADMIN_CONFIG_PATH, JSON.stringify(adminConfig, null, 2));
+  } catch (error) {
+    console.warn("Failed to persist admin config", error);
+  }
+}
+
+async function persistAdminConfig() {
+  await fsPromises.mkdir(ADMIN_DATA_DIR, { recursive: true });
+  await fsPromises.writeFile(ADMIN_CONFIG_PATH, JSON.stringify(adminConfig, null, 2));
+}
+
+function isIpAllowed(ip) {
+  const normalized = normalizeIp(ip);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "127.0.0.1" && process.env.ALLOW_LOCAL_ADMIN === "true") {
+    return true;
+  }
+  return adminConfig.allowedIps.some((entry) => entry.ip === normalized);
+}
+
+loadAdminConfig();
 
 let gsiState = {
   players: {},
@@ -18,7 +130,59 @@ let gsiState = {
   },
 };
 
+function extractClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length) {
+    const candidate = forwarded.split(",")[0].trim();
+    if (candidate) {
+      return normalizeIp(candidate);
+    }
+  }
+  return normalizeIp(req.ip || req.connection?.remoteAddress || "");
+}
+
+function requireAdminAccess(req, res, next) {
+  const clientIp = extractClientIp(req);
+  if (!isIpAllowed(clientIp)) {
+    if (req.accepts(["json", "html"]) === "json") {
+      res.status(403).json({ error: "Forbidden" });
+    } else {
+      res.status(403).send("Forbidden");
+    }
+    return;
+  }
+  req.adminClientIp = clientIp;
+  next();
+}
+
+function collectPublisherStats() {
+  const stats = [];
+
+  for (const [nickname, entry] of publishers.entries()) {
+    let connectionCount = 0;
+    const viewers = [];
+
+    for (const [viewerSocketId, connectionIds] of entry.viewers.entries()) {
+      const size = connectionIds.size;
+      connectionCount += size;
+      viewers.push({ viewerSocketId, connections: size });
+    }
+
+    stats.push({
+      nickname,
+      connections: connectionCount,
+      viewerCount: connectionCount,
+      uniqueViewers: viewers.length,
+      viewers,
+    });
+  }
+
+  stats.sort((a, b) => a.nickname.localeCompare(b.nickname));
+  return stats;
+}
+
 const app = express();
+app.set("trust proxy", true);
 app.use(cors());
 app.use(bodyParser.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -33,6 +197,12 @@ const publishers = new Map();
 let nextSocketId = 1;
 
 const PORT = process.env.PORT || 3000;
+const SITE_LINKS = [
+  { label: "Main Focus", href: "/main-gb-full-27.html" },
+  { label: "CT Cameras", href: "/ct-side-gb-27.html" },
+  { label: "T Cameras", href: "/t-side-gb-27.html" },
+  { label: "Register Camera", href: "/register.html" },
+];
 
 function sendJson(target, payload) {
   if (!target || target.readyState !== WebSocket.OPEN) {
@@ -272,11 +442,111 @@ app.get("/teams", (req, res) => {
   });
 });
 
+app.get("/admin-panel", requireAdminAccess, (_req, res) => {
+  res.sendFile(path.join(__dirname, "private", "admin.html"));
+});
+
+app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
+  res.json({
+    allowedIps: adminConfig.allowedIps,
+    publishers: collectPublisherStats(),
+    currentFocus: gsiState.currentFocus,
+    teamNames: gsiState.teamNames,
+    roster: Object.values(gsiState.players),
+    siteLinks: SITE_LINKS,
+    ownerIp: OWNER_IP,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
+app.post("/api/admin/allowed-ips", requireAdminAccess, async (req, res) => {
+  const rawIp = typeof req.body?.ip === "string" ? req.body.ip.trim() : "";
+  const normalizedIp = normalizeIp(rawIp);
+  const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
+
+  if (!normalizedIp || !isValidIp(normalizedIp)) {
+    res.status(400).json({ error: "Invalid IPv4 address" });
+    return;
+  }
+
+  if (adminConfig.allowedIps.some((entry) => entry.ip === normalizedIp)) {
+    res.status(409).json({ error: "IP address already allowed" });
+    return;
+  }
+
+  const newEntry = {
+    ip: normalizedIp,
+    label,
+    addedAt: new Date().toISOString(),
+    addedBy: req.adminClientIp,
+  };
+
+  adminConfig.allowedIps.push(newEntry);
+  try {
+    await persistAdminConfig();
+  } catch (error) {
+    console.error("Failed to persist admin config", error);
+    res.status(500).json({ error: "Failed to save configuration" });
+    return;
+  }
+
+  res.json({ ok: true, allowedIps: adminConfig.allowedIps });
+});
+
+app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) => {
+  const normalizedIp = normalizeIp(req.params?.ip);
+
+  if (!normalizedIp || !isValidIp(normalizedIp)) {
+    res.status(400).json({ error: "Invalid IPv4 address" });
+    return;
+  }
+
+  if (normalizedIp === OWNER_IP) {
+    res.status(400).json({ error: "Primary owner IP cannot be removed" });
+    return;
+  }
+
+  const index = adminConfig.allowedIps.findIndex((entry) => entry.ip === normalizedIp);
+  if (index === -1) {
+    res.status(404).json({ error: "IP address not found" });
+    return;
+  }
+
+  adminConfig.allowedIps.splice(index, 1);
+
+  try {
+    await persistAdminConfig();
+  } catch (error) {
+    console.error("Failed to persist admin config", error);
+    res.status(500).json({ error: "Failed to save configuration" });
+    return;
+  }
+
+  res.json({ ok: true, allowedIps: adminConfig.allowedIps });
+});
+
+app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
+  const nickname = typeof req.body?.nickname === "string" ? req.body.nickname.trim() : "";
+  if (!nickname) {
+    res.status(400).json({ error: "nickname is required" });
+    return;
+  }
+
+  const entry = publishers.get(nickname);
+  if (!entry) {
+    res.status(404).json({ error: "No active camera with that nickname" });
+    return;
+  }
+
+  detachPublisher(nickname, entry.socket);
+  res.json({ ok: true, nickname });
+});
+
 app.get("/camera/:nickname", (_req, res) => {
   res.status(410).json({ error: "camera snapshots are not available in the WebRTC build" });
 });
 
-app.post("/admin/focus", (req, res) => {
+app.post("/admin/focus", requireAdminAccess, (req, res) => {
   const nickname = req.body?.nickname;
 
   if (!nickname || typeof nickname !== "string") {
