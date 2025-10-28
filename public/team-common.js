@@ -98,7 +98,6 @@
 		const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
 		const retryCounts = new Map();
 		const fallbackNicknames = new Set();
-		const WEBRTC_RETRY_LIMIT = 3;
 	const MAX_PLAYERS = 5;
 	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
@@ -353,7 +352,7 @@
 		}
 	}
 
-	function cleanupSession(nickname, { notify = true } = {}) {
+	function cleanupSession(nickname, { notify = true, retainFallback = false } = {}) {
 		const session = sessions.get(nickname);
 		if (!session) {
 			return;
@@ -382,15 +381,19 @@
 			session.stream.getTracks().forEach((track) => track.stop());
 		}
 
-		retryCounts.delete(nickname);
-		deactivateFallback(nickname);
+		if (!retainFallback) {
+			retryCounts.delete(nickname);
+			deactivateFallback(nickname);
+		} else {
+			fallbackNicknames.add(nickname);
+		}
 
 		setSlotStream(nickname, null);
 	}
 
 	function cleanupAllSessions({ notify = false } = {}) {
 		for (const nickname of Array.from(sessions.keys())) {
-			cleanupSession(nickname, { notify });
+			cleanupSession(nickname, { notify, retainFallback: false });
 		}
 	}
 
@@ -406,22 +409,27 @@
 		}
 
 		if (!knownPublishers.has(nickname) || !currentPlayers.includes(nickname)) {
-			cleanupSession(nickname, { notify: true });
+			cleanupSession(nickname, { notify: true, retainFallback: false });
 			retryCounts.delete(nickname);
 			deactivateFallback(nickname);
 			return;
 		}
 
-		cleanupSession(nickname, { notify: true });
+		const retainFallback = failed && fallbackSettings.mjpeg;
+		cleanupSession(nickname, { notify: true, retainFallback });
+
+		let attempts = retryCounts.get(nickname) || 0;
 
 		if (failed) {
-			const attempts = (retryCounts.get(nickname) || 0) + 1;
+			attempts += 1;
 			retryCounts.set(nickname, attempts);
-			if (fallbackSettings.mjpeg && attempts >= WEBRTC_RETRY_LIMIT) {
+			if (fallbackSettings.mjpeg) {
 				activateFallback(nickname);
 			}
 		} else {
+			attempts = 0;
 			retryCounts.set(nickname, 0);
+			deactivateFallback(nickname);
 		}
 
 		if (!viewerRegistered || !wsReady) {
@@ -433,9 +441,11 @@
 			return;
 		}
 
+		const retryDelay = failed ? Math.min(2000, 400 + attempts * 400) : 200;
+
 		setTimeout(() => {
 			startSession(nickname);
-		}, failed ? 400 : 200);
+		}, retryDelay);
 	}
 
 	async function startSession(nickname) {
