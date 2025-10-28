@@ -105,7 +105,7 @@
   const params = new URLSearchParams(window.location.search || "");
   const preferFallback = params.get("fallback") === "mjpeg";
   const userAgent = (navigator.userAgent || "").toLowerCase();
-  const forceFallback = preferFallback || userAgent.includes("obs") || userAgent.includes("vmix");
+  const forceFallback = preferFallback;
   const hasWebRTC = forceFallback ? false : window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
 
       let ws;
