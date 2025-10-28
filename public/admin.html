@@ -217,36 +217,6 @@
       color: var(--danger);
     }
 
-    .focus-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .focus-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .focus-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .focus-list button {
-      background: var(--panel-alt);
-      border: 1px solid var(--border);
-      text-transform: none;
-      letter-spacing: 0.02em;
-    }
-
-    .focus-list button.active {
-      background: linear-gradient(135deg, var(--primary), var(--accent));
-      border-color: transparent;
-    }
-
     @media (max-width: 640px) {
       body {
         padding: 16px;
@@ -280,17 +250,6 @@
   </header>
 
   <main>
-    <section>
-      <h2>Focus Control</h2>
-      <div class="focus-grid">
-        <div class="focus-actions">
-          <button id="refreshPlayersBtn" class="secondary" type="button">Refresh Players</button>
-          <button id="clearFocusBtn" class="secondary" type="button">Clear Focus</button>
-        </div>
-        <div class="focus-list" id="playerButtons"></div>
-      </div>
-    </section>
-
     <section>
       <h2>Allowed Admin IPs</h2>
       <table>
@@ -334,11 +293,8 @@
     const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
     const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
     const KICK_ENDPOINT = "/api/admin/kick";
-    const FOCUS_ENDPOINT = "/admin/focus";
-    const PLAYERS_ENDPOINT = "/players";
 
     let ownerIp = "";
-    let currentFocus = null;
 
     const messageBox = document.getElementById("messageBox");
     const focusName = document.getElementById("focusName");
@@ -347,7 +303,6 @@
     const navLinks = document.getElementById("navLinks");
     const ipTableBody = document.getElementById("ipTableBody");
     const cameraTableBody = document.getElementById("cameraTableBody");
-    const playerButtons = document.getElementById("playerButtons");
 
     function setMessage(message, isError = false) {
       messageBox.textContent = message || "";
@@ -475,33 +430,6 @@
       });
     }
 
-    function renderPlayers(players) {
-      playerButtons.innerHTML = "";
-      players.forEach((name) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = name;
-        button.dataset.nickname = name;
-        if (name === currentFocus) {
-          button.classList.add("active");
-        }
-        button.addEventListener("click", () => handleSetFocus(name));
-        playerButtons.appendChild(button);
-      });
-    }
-
-    function applyFocusHighlight() {
-      focusName.textContent = currentFocus || "—";
-      const buttons = playerButtons.querySelectorAll("button");
-      buttons.forEach((button) => {
-        if (button.dataset.nickname === currentFocus) {
-          button.classList.add("active");
-        } else {
-          button.classList.remove("active");
-        }
-      });
-    }
-
     async function handleRemoveIp(ip) {
       if (!window.confirm(`Remove ${ip} from the allowlist?`)) {
         return;
@@ -543,44 +471,6 @@
       }
     }
 
-    async function handleSetFocus(nickname) {
-      try {
-        const response = await fetch(FOCUS_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nickname }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Unable to set focus");
-        }
-        currentFocus = nickname;
-        applyFocusHighlight();
-        setMessage(`Focus set to ${nickname}.`);
-      } catch (error) {
-        setMessage(error.message || "Failed to update focus", true);
-      }
-    }
-
-    async function handleClearFocus() {
-      try {
-        const response = await fetch(FOCUS_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nickname: "" }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Unable to clear focus");
-        }
-        currentFocus = null;
-        applyFocusHighlight();
-        setMessage("Focus cleared.");
-      } catch (error) {
-        setMessage(error.message || "Failed to clear focus", true);
-      }
-    }
-
     async function loadDashboard() {
       try {
         const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
@@ -591,29 +481,14 @@
 
         const data = await response.json();
         ownerIp = data.ownerIp;
-        currentFocus = data.currentFocus || null;
-        focusName.textContent = currentFocus || "—";
+        const focus = data.currentFocus || null;
+        focusName.textContent = focus || "—";
         updatedAt.textContent = formatDate(data.updatedAt);
         renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
         renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
         renderPublishers(Array.isArray(data.publishers) ? data.publishers : []);
-        applyFocusHighlight();
       } catch (error) {
         setMessage(error.message || "Dashboard connection failed", true);
-      }
-    }
-
-    async function loadPlayers() {
-      try {
-        const response = await fetch(PLAYERS_ENDPOINT, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Failed to load players");
-        }
-        const payload = await response.json();
-        renderPlayers(Array.isArray(payload.players) ? payload.players : []);
-        applyFocusHighlight();
-      } catch (error) {
-        setMessage(error.message || "Unable to update player list", true);
       }
     }
 
@@ -643,11 +518,7 @@
       }
     });
 
-    document.getElementById("refreshPlayersBtn").addEventListener("click", loadPlayers);
-    document.getElementById("clearFocusBtn").addEventListener("click", handleClearFocus);
-
     loadDashboard();
-    loadPlayers();
     setInterval(loadDashboard, 5000);
   </script>
 </body>
