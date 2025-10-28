@@ -39,6 +39,7 @@
       display: none;
     }
   </style>
+  <script src="js/webrtc-support.js"></script>
 </head>
 <body>
   <div class="stage">
@@ -49,7 +50,7 @@
   </div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
+    document.addEventListener("DOMContentLoaded", async () => {
       const feedStack = document.querySelector(".feed-stack");
       const videoLayers = Array.from(feedStack?.querySelectorAll(".feed-layer") || []);
 
@@ -67,8 +68,41 @@
         console.error("Unable to initialize video layers for the focus page.");
         return;
       }
+
+      const fallbackLayer = document.createElement("img");
+      fallbackLayer.className = "feed-layer";
+      fallbackLayer.style.display = "none";
+      fallbackLayer.alt = "Fallback feed";
+      fallbackLayer.loading = "lazy";
+      fallbackLayer.decoding = "async";
+      feedStack.appendChild(fallbackLayer);
+
+      fallbackLayer.addEventListener("error", () => {
+        const nickname = fallbackLayer.dataset.nickname;
+        if (!nickname) {
+          return;
+        }
+        setTimeout(() => {
+          const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
+          fallbackLayer.src = url;
+        }, 1000);
+      });
       const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
-      const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+      const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+      let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+
+      try {
+        const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
+        if (config && typeof config === "object") {
+          resolvedConfig = config;
+        }
+      } catch (error) {
+        resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+      }
+
+      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+      const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
+      const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
 
       let ws;
       let wsReady = false;
@@ -78,6 +112,9 @@
 
       const knownPublishers = new Set();
       const sessions = new Map();
+    const retryCounts = new Map();
+    const fallbackNicknames = new Set();
+    const WEBRTC_RETRY_LIMIT = 3;
 
       let desiredFocus = null;
   let displayedStream = null;
@@ -148,15 +185,71 @@
         });
       }
 
-      function ensureVideoVisible(video) {
-        if (!video) {
+      function ensureLayerVisible(element) {
+        if (!element) {
           return;
         }
-        video.style.display = "block";
-        video.style.width = "100vw";
-        video.style.height = "100vh";
-        if (!video.style.zIndex) {
-          video.style.zIndex = "1";
+        element.style.display = "block";
+        element.style.width = "100vw";
+        element.style.height = "100vh";
+        element.style.objectFit = "cover";
+        if (!element.style.zIndex) {
+          element.style.zIndex = "1";
+        }
+      }
+
+      function ensureVideoVisible(video) {
+        ensureLayerVisible(video);
+      }
+
+      function showFallback(nickname) {
+        if (!fallbackSettings.mjpeg || !nickname) {
+          return;
+        }
+
+        const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
+        fallbackLayer.dataset.nickname = nickname;
+        fallbackLayer.src = url;
+        ensureLayerVisible(fallbackLayer);
+        fallbackLayer.style.zIndex = "3";
+
+        for (const video of videoLayers) {
+          video.style.display = "none";
+        }
+
+        displayedStream = null;
+        displayedNickname = nickname;
+      }
+
+      function hideFallback(nickname) {
+        if (nickname && fallbackLayer.dataset.nickname && fallbackLayer.dataset.nickname !== nickname) {
+          return;
+        }
+
+        fallbackLayer.style.display = "none";
+        fallbackLayer.dataset.nickname = "";
+        if (fallbackLayer.src) {
+          fallbackLayer.removeAttribute("src");
+        }
+      }
+
+      function activateFallback(nickname) {
+        if (!fallbackSettings.mjpeg || !nickname) {
+          return;
+        }
+        fallbackNicknames.add(nickname);
+        if (desiredFocus === nickname) {
+          showFallback(nickname);
+        }
+      }
+
+      function deactivateFallback(nickname) {
+        if (!nickname) {
+          return;
+        }
+        fallbackNicknames.delete(nickname);
+        if (fallbackLayer.dataset.nickname === nickname) {
+          hideFallback(nickname);
         }
       }
 
@@ -174,6 +267,10 @@
 
       function setDisplay(stream, nickname) {
         const nextStream = stream || null;
+
+        if (nextStream) {
+          hideFallback();
+        }
 
         if (!nextStream) {
           swapToken += 1;
@@ -237,6 +334,7 @@
 
       function updateDisplay() {
         if (!desiredFocus) {
+          hideFallback();
           if (displayedStream) {
             setDisplay(null, null);
           }
@@ -246,26 +344,25 @@
         const session = sessions.get(desiredFocus);
 
         if (session?.stream) {
+          deactivateFallback(desiredFocus);
           if (displayedStream !== session.stream) {
             setDisplay(session.stream, session.nickname);
           }
           return;
         }
 
+        if (fallbackNicknames.has(desiredFocus)) {
+          showFallback(desiredFocus);
+          return;
+        }
+
+        hideFallback(desiredFocus);
+
         if (!sessions.has(desiredFocus)) {
           if (displayedStream) {
             setDisplay(null, null);
           }
           return;
-        }
-
-        if (displayedStream && displayedNickname !== desiredFocus) {
-          // Keep the previous stream visible until the new one appears to avoid flicker.
-          return;
-        }
-
-        if (!displayedStream) {
-          setDisplay(null, null);
         }
       }
 
@@ -297,12 +394,15 @@
           session.pc.onconnectionstatechange = null;
           session.pc.close();
         } catch (error) {
-    console.warn("Failed to close peer", error);
+          console.warn("Failed to close peer", error);
         }
 
         if (session.stream) {
           session.stream.getTracks().forEach((track) => track.stop());
         }
+
+        retryCounts.delete(nickname);
+        deactivateFallback(nickname);
 
         if (displayedNickname === nickname) {
           setDisplay(null, null);
@@ -315,22 +415,42 @@
         }
       }
 
-      function restartSession(nickname) {
-        if (!knownPublishers.has(nickname)) {
-          cleanupSession(nickname, { notify: true });
+      function restartSession(nickname, { failed = false } = {}) {
+        if (!nickname) {
           return;
         }
 
-        const hadSession = sessions.has(nickname);
+        if (!knownPublishers.has(nickname)) {
+          cleanupSession(nickname, { notify: true });
+          retryCounts.delete(nickname);
+          deactivateFallback(nickname);
+          return;
+        }
+
         cleanupSession(nickname, { notify: true });
+
+        if (failed) {
+          const attempts = (retryCounts.get(nickname) || 0) + 1;
+          retryCounts.set(nickname, attempts);
+          if (fallbackSettings.mjpeg && attempts >= WEBRTC_RETRY_LIMIT) {
+            activateFallback(nickname);
+          }
+        } else {
+          retryCounts.set(nickname, 0);
+        }
 
         if (!viewerRegistered || !wsReady) {
           return;
         }
 
-        if (hadSession) {
-          Promise.resolve().then(() => startSession(nickname));
+        if (!hasWebRTC) {
+          activateFallback(nickname);
+          return;
         }
+
+        setTimeout(() => {
+          startSession(nickname);
+        }, failed ? 400 : 200);
       }
 
       async function startSession(nickname) {
@@ -343,6 +463,11 @@
         }
 
         if (sessions.has(nickname)) {
+          return;
+        }
+
+        if (!hasWebRTC) {
+          activateFallback(nickname);
           return;
         }
 
@@ -388,11 +513,13 @@
           }
 
           if (pc.connectionState === "connected") {
+            retryCounts.set(nickname, 0);
+            deactivateFallback(nickname);
             return;
           }
 
           if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-            restartSession(nickname);
+            restartSession(nickname, { failed: true });
           } else if (pc.connectionState === "closed") {
             cleanupSession(nickname, { notify: false });
           }
@@ -410,7 +537,7 @@
           });
         } catch (error) {
       console.error("Failed to start WebRTC session", error);
-          restartSession(nickname);
+          restartSession(nickname, { failed: true });
         }
       }
 
@@ -447,7 +574,7 @@
 
         session.pc.setRemoteDescription(payload.sdp).catch((error) => {
       console.error("Failed to apply answer", error);
-          restartSession(nickname);
+          restartSession(nickname, { failed: true });
         });
       }
 
@@ -480,7 +607,7 @@
           return;
         }
 
-        restartSession(nickname);
+        restartSession(nickname, { failed: true });
       }
 
       function handleActivePublishers(list) {

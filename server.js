@@ -204,6 +204,136 @@ const SITE_LINKS = [
   { label: "Register Camera", href: "/register.html" },
 ];
 
+const ICE_SERVER_CONFIG = loadIceServerConfig();
+const MJPEG_BOUNDARY = "frame";
+const fallbackFrames = new Map();
+const fallbackClients = new Map();
+
+function loadIceServerConfig() {
+  const defaults = [
+    {
+      urls: ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
+    },
+  ];
+
+  const parsed = [];
+  const envConfig = process.env.ICE_SERVERS;
+
+  if (envConfig) {
+    try {
+      const value = JSON.parse(envConfig);
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (entry && typeof entry === "object" && entry.urls) {
+            parsed.push(entry);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to parse ICE_SERVERS. Using defaults.", error);
+    }
+  }
+
+  if (parsed.length === 0) {
+    parsed.push(...defaults);
+  }
+
+  const turnUrl = process.env.TURN_URL || process.env.TURN_SERVER || "";
+  if (turnUrl) {
+    const urls = turnUrl
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (urls.length) {
+      parsed.push({
+        urls,
+        username: process.env.TURN_USERNAME || process.env.TURN_USER || "",
+        credential: process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || "",
+      });
+    }
+  }
+
+  return parsed;
+}
+
+function writeMjpegFrame(res, frame) {
+  if (!res || res.writableEnded || !frame?.buffer) {
+    return;
+  }
+
+  try {
+    res.write(`--${MJPEG_BOUNDARY}\r\n`);
+    res.write(`Content-Type: ${frame.mimeType || "image/jpeg"}\r\n`);
+    res.write(`Content-Length: ${frame.buffer.length}\r\n\r\n`);
+    res.write(frame.buffer);
+    res.write("\r\n");
+  } catch (error) {
+    try {
+      res.end();
+    } catch (endError) {
+      // ignore ending errors
+    }
+  }
+}
+
+function broadcastFallbackFrame(nickname, record) {
+  const key = normalizeNicknameKey(nickname);
+  if (!key || !record) {
+    return;
+  }
+
+  const clients = fallbackClients.get(key);
+  if (!clients || clients.size === 0) {
+    return;
+  }
+
+  for (const res of Array.from(clients)) {
+    if (!res || res.writableEnded) {
+      clients.delete(res);
+      continue;
+    }
+    writeMjpegFrame(res, record);
+  }
+
+  if (clients.size === 0) {
+    fallbackClients.delete(key);
+  }
+}
+
+function clearFallbackForNickname(nickname) {
+  const key = normalizeNicknameKey(nickname);
+  if (!key) {
+    return;
+  }
+
+  fallbackFrames.delete(key);
+
+  const clients = fallbackClients.get(key);
+  if (!clients) {
+    return;
+  }
+
+  for (const res of clients) {
+    try {
+      res.end();
+    } catch (error) {
+      // ignore client end errors
+    }
+  }
+
+  fallbackClients.delete(key);
+}
+
+function normalizeNicknameKey(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLowerCase() : "";
+}
+
 function sendJson(target, payload) {
   if (!target || target.readyState !== WebSocket.OPEN) {
     return;
@@ -300,6 +430,7 @@ function detachPublisher(nickname, socket) {
     broadcastState();
   }
 
+  clearFallbackForNickname(nickname);
   broadcastPublisherList();
 }
 
@@ -406,6 +537,18 @@ app.get("/players", (req, res) => {
   }
 
   res.json({ players: [...names].sort() });
+});
+
+app.get("/api/webrtc/config", (_req, res) => {
+  res.json({
+    iceServers: ICE_SERVER_CONFIG,
+    fallback: {
+      mjpeg: true,
+      endpoint: "/fallback/mjpeg",
+      heartbeatSeconds: 20,
+      maxFps: 5,
+    },
+  });
 });
 
 app.get("/current-focus", (req, res) => {
@@ -557,6 +700,85 @@ app.post("/admin/focus", requireAdminAccess, (req, res) => {
   gsiState.currentFocus = nickname;
   broadcastState();
   res.json({ ok: true, currentFocus: gsiState.currentFocus });
+});
+
+app.post("/api/fallback/frame", (req, res) => {
+  const nicknameRaw = typeof req.body?.nickname === "string" ? req.body.nickname : "";
+  const framePayload = typeof req.body?.frame === "string" ? req.body.frame : "";
+  const mimeType = typeof req.body?.mimeType === "string" && req.body.mimeType ? req.body.mimeType : "image/jpeg";
+
+  const nicknameKey = normalizeNicknameKey(nicknameRaw);
+  if (!nicknameKey || !framePayload) {
+    res.status(400).json({ error: "nickname and frame are required" });
+    return;
+  }
+
+  const isActivePublisher = Array.from(publishers.keys()).some((value) => normalizeNicknameKey(value) === nicknameKey);
+  if (!isActivePublisher) {
+    res.status(409).json({ error: "publisher is not active" });
+    return;
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(framePayload, "base64");
+  } catch (error) {
+    res.status(400).json({ error: "invalid frame encoding" });
+    return;
+  }
+
+  if (!buffer.length) {
+    res.status(400).json({ error: "frame is empty" });
+    return;
+  }
+
+  if (buffer.length > 2_000_000) {
+    res.status(413).json({ error: "frame is too large" });
+    return;
+  }
+
+  const record = {
+    buffer,
+    mimeType,
+    updatedAt: Date.now(),
+  };
+
+  fallbackFrames.set(nicknameKey, record);
+  broadcastFallbackFrame(nicknameKey, record);
+
+  res.json({ ok: true });
+});
+
+app.get("/fallback/mjpeg/:nickname", (req, res) => {
+  const nicknameKey = normalizeNicknameKey(req.params.nickname);
+  if (!nicknameKey) {
+    res.status(400).send("nickname is required");
+    return;
+  }
+
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Content-Type", `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`);
+
+  let clients = fallbackClients.get(nicknameKey);
+  if (!clients) {
+    clients = new Set();
+    fallbackClients.set(nicknameKey, clients);
+  }
+
+  clients.add(res);
+
+  const record = fallbackFrames.get(nicknameKey);
+  if (record) {
+    writeMjpegFrame(res, record);
+  }
+
+  req.on("close", () => {
+    clients.delete(res);
+    if (clients.size === 0) {
+      fallbackClients.delete(nicknameKey);
+    }
+  });
 });
 
 function handleHello(socket, meta, payload) {

@@ -1,4 +1,4 @@
-(() => {
+(async () => {
 	const TEAM_TITLES = {
 		CT: "CT Squad",
 		T: "T Squad",
@@ -81,7 +81,24 @@
 	}
 
 	const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
-	const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+		const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+		let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+
+		try {
+			const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
+			if (config && typeof config === "object") {
+				resolvedConfig = config;
+			}
+		} catch (error) {
+			resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+		}
+
+		const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+		const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
+		const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+		const retryCounts = new Map();
+		const fallbackNicknames = new Set();
+		const WEBRTC_RETRY_LIMIT = 3;
 	const MAX_PLAYERS = 5;
 	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
@@ -116,6 +133,54 @@
 		return `team-viewer-${Date.now()}-${connectionCounter}`;
 	}
 
+	function showSlotFallback(nickname) {
+		if (!fallbackSettings.mjpeg) {
+			return;
+		}
+
+		const slot = slots.get(nickname);
+		if (!slot?.fallbackImg) {
+			return;
+		}
+
+		const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
+		slot.fallbackImg.dataset.nickname = nickname;
+		slot.fallbackImg.src = url;
+		slot.fallbackImg.style.display = "block";
+		slot.video.style.display = "none";
+		slot.placeholder.style.display = "none";
+		slot.card.classList.remove("no-feed");
+	}
+
+	function hideSlotFallback(nickname) {
+		const slot = slots.get(nickname);
+		if (!slot?.fallbackImg) {
+			return;
+		}
+
+		slot.fallbackImg.style.display = "none";
+		slot.fallbackImg.dataset.nickname = "";
+		if (slot.fallbackImg.src) {
+			slot.fallbackImg.removeAttribute("src");
+		}
+	}
+
+	function activateFallback(nickname) {
+		if (!fallbackSettings.mjpeg || !nickname) {
+			return;
+		}
+		fallbackNicknames.add(nickname);
+		showSlotFallback(nickname);
+	}
+
+	function deactivateFallback(nickname) {
+		if (!nickname) {
+			return;
+		}
+		fallbackNicknames.delete(nickname);
+		hideSlotFallback(nickname);
+	}
+
 	function createPlayerSlot(nickname) {
 		const card = document.createElement("div");
 		card.className = "slot no-feed";
@@ -130,6 +195,22 @@
 		video.muted = true;
 		video.style.display = "none";
 
+		const fallbackImg = document.createElement("img");
+		fallbackImg.className = "fallback";
+		fallbackImg.style.display = "none";
+		fallbackImg.alt = "Fallback feed";
+		fallbackImg.loading = "lazy";
+		fallbackImg.decoding = "async";
+		fallbackImg.addEventListener("error", () => {
+			const targetNickname = fallbackImg.dataset.nickname;
+			if (!targetNickname) {
+				return;
+			}
+			setTimeout(() => {
+				fallbackImg.src = window.WebRTC_SUPPORT?.createMjpegUrl?.(targetNickname) || `/fallback/mjpeg/${encodeURIComponent(targetNickname)}?t=${Date.now()}`;
+			}, 1000);
+		});
+
 		const placeholder = document.createElement("div");
 		placeholder.className = "placeholder";
 		placeholder.textContent = "No live feed";
@@ -139,11 +220,12 @@
 		label.textContent = nickname;
 
 		frameWrapper.appendChild(video);
+		frameWrapper.appendChild(fallbackImg);
 		frameWrapper.appendChild(placeholder);
 		card.appendChild(frameWrapper);
 		card.appendChild(label);
 
-		return { card, video, placeholder, label };
+		return { card, video, fallbackImg, placeholder, label };
 	}
 
 	function createEmptySlot() {
@@ -250,17 +332,24 @@
 		}
 
 		if (stream) {
-					slot.card.classList.remove("no-feed");
-					slot.placeholder.style.display = "none";
-					slot.video.style.display = "block";
-					const attemptPlay = slot.video.play?.();
-					if (attemptPlay && typeof attemptPlay.catch === "function") {
-						attemptPlay.catch(() => {});
-					}
+			hideSlotFallback(nickname);
+			slot.card.classList.remove("no-feed");
+			slot.placeholder.style.display = "none";
+			slot.video.style.display = "block";
+			const attemptPlay = slot.video.play?.();
+			if (attemptPlay && typeof attemptPlay.catch === "function") {
+				attemptPlay.catch(() => {});
+			}
 		} else {
-			slot.card.classList.add("no-feed");
-			slot.placeholder.style.display = "";
 			slot.video.style.display = "none";
+			slot.video.srcObject = null;
+			if (fallbackNicknames.has(nickname)) {
+				showSlotFallback(nickname);
+			} else {
+				hideSlotFallback(nickname);
+				slot.card.classList.add("no-feed");
+				slot.placeholder.style.display = "";
+			}
 		}
 	}
 
@@ -293,6 +382,9 @@
 			session.stream.getTracks().forEach((track) => track.stop());
 		}
 
+		retryCounts.delete(nickname);
+		deactivateFallback(nickname);
+
 		setSlotStream(nickname, null);
 	}
 
@@ -308,12 +400,42 @@
 		}
 	}
 
-	function restartSession(nickname) {
-		const hadSession = sessions.has(nickname);
-		cleanupSession(nickname, { notify: true });
-		if (hadSession) {
-			Promise.resolve().then(() => startSession(nickname));
+	function restartSession(nickname, { failed = false } = {}) {
+		if (!nickname) {
+			return;
 		}
+
+		if (!knownPublishers.has(nickname) || !currentPlayers.includes(nickname)) {
+			cleanupSession(nickname, { notify: true });
+			retryCounts.delete(nickname);
+			deactivateFallback(nickname);
+			return;
+		}
+
+		cleanupSession(nickname, { notify: true });
+
+		if (failed) {
+			const attempts = (retryCounts.get(nickname) || 0) + 1;
+			retryCounts.set(nickname, attempts);
+			if (fallbackSettings.mjpeg && attempts >= WEBRTC_RETRY_LIMIT) {
+				activateFallback(nickname);
+			}
+		} else {
+			retryCounts.set(nickname, 0);
+		}
+
+		if (!viewerRegistered || !wsReady) {
+			return;
+		}
+
+		if (!hasWebRTC) {
+			activateFallback(nickname);
+			return;
+		}
+
+		setTimeout(() => {
+			startSession(nickname);
+		}, failed ? 400 : 200);
 	}
 
 	async function startSession(nickname) {
@@ -331,6 +453,11 @@
 
 			const slot = slots.get(nickname);
 		if (!slot) {
+			return;
+		}
+
+		if (!hasWebRTC) {
+			activateFallback(nickname);
 			return;
 		}
 
@@ -378,11 +505,13 @@
 			}
 
 			if (pc.connectionState === "connected") {
+				retryCounts.set(nickname, 0);
+				deactivateFallback(nickname);
 				return;
 			}
 
 			if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-				restartSession(nickname);
+				restartSession(nickname, { failed: true });
 			} else if (pc.connectionState === "closed") {
 				cleanupSession(nickname, { notify: false });
 			}
@@ -400,7 +529,7 @@
 			});
 		} catch (error) {
 			console.error("Failed to create offer for", nickname, error);
-			restartSession(nickname);
+			restartSession(nickname, { failed: true });
 		}
 	}
 
@@ -437,7 +566,7 @@
 
 		session.pc.setRemoteDescription(payload.sdp).catch((error) => {
 			console.error("Failed to apply answer", nickname, error);
-			restartSession(nickname);
+			restartSession(nickname, { failed: true });
 		});
 	}
 
@@ -470,7 +599,7 @@
 			return;
 		}
 
-		restartSession(nickname);
+		restartSession(nickname, { failed: true });
 	}
 
 	function handleActivePublishers(list) {

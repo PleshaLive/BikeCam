@@ -180,6 +180,7 @@
       text-transform: uppercase;
     }
   </style>
+  <script src="js/webrtc-support.js"></script>
 </head>
 <body>
   <div class="card">
@@ -206,23 +207,49 @@
   </div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-          const nicknameSelect = document.getElementById("nicknameSelect");
-          const refreshBtn = document.getElementById("refreshBtn");
-          const cameraSelect = document.getElementById("cameraSelect");
-          const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
-          const applySelectionBtn = document.getElementById("applySelectionBtn");
-          const startCameraBtn = document.getElementById("startCameraBtn");
-          const status = document.getElementById("status");
-          const video = document.getElementById("camPreview");
-          const card = document.querySelector(".card");
+    document.addEventListener("DOMContentLoaded", async () => {
+      const nicknameSelect = document.getElementById("nicknameSelect");
+      const refreshBtn = document.getElementById("refreshBtn");
+      const cameraSelect = document.getElementById("cameraSelect");
+      const cameraRefreshBtn = document.getElementById("cameraRefreshBtn");
+      const applySelectionBtn = document.getElementById("applySelectionBtn");
+      const startCameraBtn = document.getElementById("startCameraBtn");
+      const status = document.getElementById("status");
+      const video = document.getElementById("camPreview");
+      const card = document.querySelector(".card");
 
-          const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
-          const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
-          const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+      let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+      try {
+        const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
+        if (config && typeof config === "object") {
+          resolvedConfig = config;
+        }
+      } catch (error) {
+        resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+      }
 
-          const peers = new Map();
-          const takenNicknames = new Set();
+      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+      const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
+      const fallbackIntervalMs = Math.max(200, Math.round(1000 / Math.max(1, fallbackSettings.maxFps || 5)));
+      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+      const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+
+      const peers = new Map();
+      const takenNicknames = new Set();
+      const senderMonitors = new Map();
+
+      const fallbackState = {
+        timer: null,
+        sending: false,
+        canvas: null,
+        context: null,
+        lastSent: 0,
+      };
+
+      let bitrateMonitorTimer = null;
+      const BITRATE_LEVELS = [400000, 800000, 1200000, 1800000, 2500000];
 
           let ws;
           let wsReady = false;
@@ -263,6 +290,288 @@
             error.code = "MEDIA_NOT_SUPPORTED";
             throw error;
           }
+
+      function ensureFallbackCanvas(width, height) {
+        const safeWidth = Math.max(1, Math.floor(width) || 1);
+        const safeHeight = Math.max(1, Math.floor(height) || 1);
+
+        if (!fallbackState.canvas) {
+          fallbackState.canvas = document.createElement("canvas");
+          fallbackState.context = fallbackState.canvas.getContext("2d", { alpha: false });
+        }
+
+        if (!fallbackState.context) {
+          return null;
+        }
+
+        if (fallbackState.canvas.width !== safeWidth || fallbackState.canvas.height !== safeHeight) {
+          fallbackState.canvas.width = safeWidth;
+          fallbackState.canvas.height = safeHeight;
+        }
+
+        return fallbackState.context;
+      }
+
+      function canvasToBlob(canvas) {
+        return new Promise((resolve, reject) => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(blob);
+              } else {
+                reject(new Error("Failed to create fallback frame"));
+              }
+            },
+            "image/jpeg",
+            0.7,
+          );
+        });
+      }
+
+      async function captureFallbackBlob() {
+        if (!currentStream) {
+          return null;
+        }
+
+        const [track] = currentStream.getVideoTracks().filter((item) => item.readyState === "live");
+        const fallbackWidth = video.videoWidth || track?.getSettings?.().width || 1280;
+        const fallbackHeight = video.videoHeight || track?.getSettings?.().height || 720;
+
+        if (typeof ImageCapture === "function" && track) {
+          try {
+            const capture = new ImageCapture(track);
+            const bitmap = await capture.grabFrame();
+            const context = ensureFallbackCanvas(bitmap.width || fallbackWidth, bitmap.height || fallbackHeight);
+            if (!context) {
+              return null;
+            }
+            context.drawImage(bitmap, 0, 0, context.canvas.width, context.canvas.height);
+            if (typeof bitmap.close === "function") {
+              bitmap.close();
+            }
+            return canvasToBlob(context.canvas);
+          } catch (error) {
+            // fall back to drawing from the preview element
+          }
+        }
+
+        const context = ensureFallbackCanvas(fallbackWidth, fallbackHeight);
+        if (!context) {
+          return null;
+        }
+
+        try {
+          context.drawImage(video, 0, 0, context.canvas.width, context.canvas.height);
+        } catch (error) {
+          return null;
+        }
+
+        return canvasToBlob(context.canvas);
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        const length = bytes.length;
+        for (let index = 0; index < length; index += 1) {
+          binary += String.fromCharCode(bytes[index]);
+        }
+        return window.btoa(binary);
+      }
+
+      async function sendFallbackFrame() {
+        if (!fallbackSettings.mjpeg || !lastAppliedNickname || !currentStream) {
+          return;
+        }
+
+        if (fallbackState.sending) {
+          return;
+        }
+
+        const now = Date.now();
+        if (now - fallbackState.lastSent < fallbackIntervalMs - 20) {
+          return;
+        }
+
+        fallbackState.sending = true;
+        try {
+          const blob = await captureFallbackBlob();
+          if (!blob) {
+            return;
+          }
+
+          const arrayBuffer = await blob.arrayBuffer();
+          const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
+
+          await fetch("/api/fallback/frame", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              nickname: lastAppliedNickname,
+              frame: base64,
+              mimeType: blob.type || "image/jpeg",
+            }),
+            keepalive: true,
+          });
+        } catch (error) {
+          // ignore fallback transport errors
+        } finally {
+          fallbackState.sending = false;
+          fallbackState.lastSent = Date.now();
+        }
+      }
+
+      function startFallbackFrames() {
+        if (!fallbackSettings.mjpeg || fallbackState.timer) {
+          return;
+        }
+
+        fallbackState.lastSent = 0;
+        fallbackState.timer = setInterval(() => {
+          sendFallbackFrame().catch(() => {});
+        }, fallbackIntervalMs);
+        sendFallbackFrame().catch(() => {});
+      }
+
+      function stopFallbackFrames() {
+        if (fallbackState.timer) {
+          clearInterval(fallbackState.timer);
+          fallbackState.timer = null;
+        }
+        fallbackState.sending = false;
+      }
+
+      function applySenderEncoding(sender, bitrate) {
+        if (!sender) {
+          return;
+        }
+
+        try {
+          const parameters = sender.getParameters();
+          if (!Array.isArray(parameters.encodings) || !parameters.encodings.length) {
+            parameters.encodings = [{}];
+          }
+          parameters.degradationPreference = "maintain-framerate";
+          parameters.encodings[0].maxBitrate = bitrate;
+          parameters.encodings[0].maxFramerate = 30;
+          parameters.encodings[0].scaleResolutionDownBy = parameters.encodings[0].scaleResolutionDownBy || 1;
+          sender.setParameters(parameters).catch(() => {});
+        } catch (error) {
+          console.warn("Failed to adjust encoder parameters", error);
+        }
+      }
+
+      function registerSenderMonitor(key, pc) {
+        if (!pc) {
+          return;
+        }
+
+        const sender = pc
+          .getSenders()
+          .find((item) => item && item.track && item.track.kind === "video" && item.track.readyState === "live");
+
+        if (!sender) {
+          return;
+        }
+
+        const state = senderMonitors.get(key) || {
+          sender,
+          levelIndex: BITRATE_LEVELS.length - 1,
+          lastBytes: 0,
+          lastTimestamp: 0,
+          lastAdjust: 0,
+        };
+
+        state.sender = sender;
+        senderMonitors.set(key, state);
+        applySenderEncoding(sender, BITRATE_LEVELS[state.levelIndex]);
+        startBitrateMonitor();
+      }
+
+      function removeSenderMonitor(key) {
+        senderMonitors.delete(key);
+        if (senderMonitors.size === 0 && bitrateMonitorTimer) {
+          clearInterval(bitrateMonitorTimer);
+          bitrateMonitorTimer = null;
+        }
+      }
+
+      function startBitrateMonitor() {
+        if (bitrateMonitorTimer || senderMonitors.size === 0) {
+          return;
+        }
+
+        bitrateMonitorTimer = setInterval(() => {
+          evaluateSenderMonitors().catch(() => {});
+        }, 4000);
+      }
+
+      async function evaluateSenderMonitors() {
+        if (senderMonitors.size === 0) {
+          return;
+        }
+
+        const tasks = [];
+        const now = Date.now();
+
+        for (const [key, state] of senderMonitors.entries()) {
+          if (!state.sender?.track || state.sender.track.readyState !== "live") {
+            removeSenderMonitor(key);
+            continue;
+          }
+
+          tasks.push(
+            state.sender
+              .getStats()
+              .then((stats) => {
+                let outbound = null;
+                stats.forEach((report) => {
+                  if (report.type === "outbound-rtp" && report.kind === "video" && !report.isRemote) {
+                    outbound = report;
+                  }
+                });
+
+                if (!outbound || !outbound.bytesSent) {
+                  return;
+                }
+
+                if (state.lastTimestamp && outbound.timestamp > state.lastTimestamp) {
+                  const deltaBytes = outbound.bytesSent - state.lastBytes;
+                  const deltaMs = outbound.timestamp - state.lastTimestamp;
+                  const bitrate = deltaMs > 0 ? (deltaBytes * 8 * 1000) / deltaMs : 0;
+                  const packetsSent = outbound.packetsSent || 0;
+                  const packetsLost = outbound.packetsLost || 0;
+                  const totalPackets = packetsSent + packetsLost;
+                  const lossRatio = totalPackets > 0 ? packetsLost / totalPackets : 0;
+
+                  let nextIndex = state.levelIndex;
+
+                  if (lossRatio > 0.08 || bitrate < BITRATE_LEVELS[state.levelIndex] * 0.6) {
+                    nextIndex = Math.max(0, state.levelIndex - 1);
+                  } else if (lossRatio < 0.02 && bitrate > BITRATE_LEVELS[state.levelIndex] * 0.85) {
+                    nextIndex = Math.min(BITRATE_LEVELS.length - 1, state.levelIndex + 1);
+                  }
+
+                  if (nextIndex !== state.levelIndex && now - state.lastAdjust > 5000) {
+                    state.levelIndex = nextIndex;
+                    state.lastAdjust = now;
+                    applySenderEncoding(state.sender, BITRATE_LEVELS[state.levelIndex]);
+                  }
+                }
+
+                state.lastBytes = outbound.bytesSent;
+                state.lastTimestamp = outbound.timestamp;
+              })
+              .catch(() => {}),
+          );
+        }
+
+        await Promise.allSettled(tasks);
+
+        if (senderMonitors.size === 0 && bitrateMonitorTimer) {
+          clearInterval(bitrateMonitorTimer);
+          bitrateMonitorTimer = null;
+        }
+      }
 
           async function loadPlayers() {
             try {
@@ -357,6 +666,7 @@
             }
 
             peers.delete(key);
+            removeSenderMonitor(key);
 
             try {
               session.pc.onicecandidate = null;
@@ -412,6 +722,12 @@
               card.classList.toggle("connected", state);
             }
             applySelectionBtn.classList.toggle("connected", state);
+
+            if (state) {
+              startFallbackFrames();
+            } else {
+              stopFallbackFrames();
+            }
           }
 
           function updateTakenNicknames(list) {
@@ -443,6 +759,9 @@
           }
 
           function buildPublisherPeer({ viewerSocketId, connectionId, nickname }) {
+            if (!hasWebRTC) {
+              return null;
+            }
             const key = peerKey(viewerSocketId, connectionId);
             const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
             peers.set(key, { pc, viewerSocketId, connectionId, nickname });
@@ -450,6 +769,8 @@
             if (currentStream) {
               currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream));
             }
+
+            registerSenderMonitor(key, pc);
 
             pc.onicecandidate = (event) => {
               if (!event.candidate) {
@@ -486,6 +807,10 @@
             }
 
             const pc = buildPublisherPeer({ viewerSocketId, connectionId, nickname });
+            if (!pc) {
+              status.textContent = "WebRTC is unavailable. MJPEG fallback is running.";
+              return;
+            }
 
             try {
               await pc.setRemoteDescription(sdp);
