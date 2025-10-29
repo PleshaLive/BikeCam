@@ -258,7 +258,7 @@
             <th>IP Address</th>
             <th>Label</th>
             <th>Added</th>
-            <th></th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="ipTableBody"></tbody>
@@ -279,6 +279,8 @@
         <thead>
           <tr>
             <th>Nickname</th>
+            <th>Team</th>
+            <th>Status</th>
             <th>Viewers</th>
             <th>Connections</th>
             <th></th>
@@ -290,9 +292,10 @@
   </main>
 
   <script>
-    const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
-    const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
-    const KICK_ENDPOINT = "/api/admin/kick";
+  const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
+  const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
+  const KICK_ENDPOINT = "/api/admin/kick";
+  const RENAME_ENDPOINT = "/api/admin/rename";
 
     let ownerIp = "";
 
@@ -385,14 +388,72 @@
       });
     }
 
-    function renderPublishers(items) {
+    function renderPlayersBoard(data) {
       cameraTableBody.innerHTML = "";
 
-      if (!items.length) {
+      const publishers = Array.isArray(data?.publishers) ? data.publishers : [];
+      const roster = Array.isArray(data?.roster) ? data.roster : [];
+
+      const statsByKey = new Map();
+      publishers.forEach((entry) => {
+        const nickname = typeof entry.nickname === "string" ? entry.nickname.trim() : "";
+        if (!nickname) {
+          return;
+        }
+        statsByKey.set(nickname.toLowerCase(), {
+          nickname,
+          viewers: Number(entry.uniqueViewers || 0),
+          connections: Number(entry.connections || 0),
+        });
+      });
+
+      const rows = [];
+      const seen = new Set();
+
+      roster.forEach((player) => {
+        const nickname = typeof player?.name === "string" ? player.name.trim() : "";
+        if (!nickname) {
+          return;
+        }
+        const key = nickname.toLowerCase();
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        const stats = statsByKey.get(key);
+        rows.push({
+          nickname,
+          team: typeof player?.team === "string" ? player.team.trim().toUpperCase() : "",
+          online: Boolean(stats),
+          viewers: stats?.viewers ?? 0,
+          connections: stats?.connections ?? 0,
+        });
+      });
+
+      publishers.forEach((entry) => {
+        const nickname = typeof entry.nickname === "string" ? entry.nickname.trim() : "";
+        if (!nickname) {
+          return;
+        }
+        const key = nickname.toLowerCase();
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        rows.push({
+          nickname,
+          team: "",
+          online: true,
+          viewers: Number(entry.uniqueViewers || 0),
+          connections: Number(entry.connections || 0),
+        });
+      });
+
+      if (!rows.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No active cameras";
+        cell.colSpan = 6;
+        cell.textContent = "No players available";
         cell.style.color = "var(--muted)";
         row.appendChild(cell);
         cameraTableBody.appendChild(row);
@@ -400,34 +461,73 @@
         return;
       }
 
-      cameraCount.textContent = items.length.toString();
+      rows.sort((a, b) => {
+        const teamA = a.team || "ZZ";
+        const teamB = b.team || "ZZ";
+        if (teamA !== teamB) {
+          return teamA.localeCompare(teamB);
+        }
+        if (a.online !== b.online) {
+          return a.online ? -1 : 1;
+        }
+        return a.nickname.localeCompare(b.nickname);
+      });
 
-      items.forEach((entry) => {
+      let onlineCount = 0;
+
+      rows.forEach((player) => {
+        if (player.online) {
+          onlineCount += 1;
+        }
+
         const row = document.createElement("tr");
 
-        const nameCell = document.createElement("td");
-        nameCell.textContent = entry.nickname;
-        row.appendChild(nameCell);
+        const nicknameCell = document.createElement("td");
+        nicknameCell.textContent = player.nickname;
+        row.appendChild(nicknameCell);
+
+        const teamCell = document.createElement("td");
+        teamCell.textContent = player.team || "—";
+        row.appendChild(teamCell);
+
+        const statusCell = document.createElement("td");
+        statusCell.textContent = player.online ? "Online" : "Offline";
+        statusCell.style.color = player.online ? "var(--success)" : "var(--muted)";
+        row.appendChild(statusCell);
 
         const viewersCell = document.createElement("td");
-        viewersCell.textContent = entry.uniqueViewers.toString();
+        viewersCell.textContent = player.viewers.toString();
         row.appendChild(viewersCell);
 
         const connectionsCell = document.createElement("td");
-        connectionsCell.textContent = entry.connections.toString();
+        connectionsCell.textContent = player.connections.toString();
         row.appendChild(connectionsCell);
 
-        const actionCell = document.createElement("td");
+        const actionsCell = document.createElement("td");
+        actionsCell.style.display = "flex";
+        actionsCell.style.gap = "8px";
+
+        const renameBtn = document.createElement("button");
+        renameBtn.type = "button";
+        renameBtn.className = "secondary";
+        renameBtn.textContent = "Rename";
+        renameBtn.addEventListener("click", () => handleRename(player.nickname));
+        actionsCell.appendChild(renameBtn);
+
         const kickBtn = document.createElement("button");
-        kickBtn.className = "danger";
         kickBtn.type = "button";
+        kickBtn.className = "danger";
         kickBtn.textContent = "Kick";
-        kickBtn.addEventListener("click", () => handleKick(entry.nickname));
-        actionCell.appendChild(kickBtn);
-        row.appendChild(actionCell);
+        kickBtn.disabled = !player.online;
+        kickBtn.addEventListener("click", () => handleKick(player.nickname));
+        actionsCell.appendChild(kickBtn);
+
+        row.appendChild(actionsCell);
 
         cameraTableBody.appendChild(row);
       });
+
+      cameraCount.textContent = onlineCount.toString();
     }
 
     async function handleRemoveIp(ip) {
@@ -471,6 +571,40 @@
       }
     }
 
+    async function handleRename(oldNickname) {
+      const proposed = window.prompt("Enter new nickname", oldNickname);
+      if (proposed === null) {
+        return;
+      }
+
+      const newNickname = proposed.trim();
+      if (!newNickname) {
+        setMessage("Nickname cannot be empty", true);
+        return;
+      }
+
+      if (newNickname === oldNickname) {
+        setMessage("Nickname unchanged", true);
+        return;
+      }
+
+      try {
+        const response = await fetch(RENAME_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ oldNickname, newNickname }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to rename player");
+        }
+        setMessage(`Renamed ${oldNickname} to ${newNickname}.`);
+        await loadDashboard();
+      } catch (error) {
+        setMessage(error.message || "Failed to rename player", true);
+      }
+    }
+
     async function loadDashboard() {
       try {
         const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
@@ -485,8 +619,8 @@
         focusName.textContent = focus || "—";
         updatedAt.textContent = formatDate(data.updatedAt);
         renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
-        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
-        renderPublishers(Array.isArray(data.publishers) ? data.publishers : []);
+  renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
+  renderPlayersBoard(data);
       } catch (error) {
         setMessage(error.message || "Dashboard connection failed", true);
       }

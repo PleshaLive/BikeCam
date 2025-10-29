@@ -685,6 +685,89 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
   res.json({ ok: true, nickname });
 });
 
+app.post("/api/admin/rename", requireAdminAccess, (req, res) => {
+  const oldNickname = typeof req.body?.oldNickname === "string" ? req.body.oldNickname.trim() : "";
+  const newNickname = typeof req.body?.newNickname === "string" ? req.body.newNickname.trim() : "";
+
+  if (!oldNickname || !newNickname) {
+    res.status(400).json({ error: "oldNickname and newNickname are required" });
+    return;
+  }
+
+  if (oldNickname === newNickname) {
+    res.status(400).json({ error: "Nicknames must be different" });
+    return;
+  }
+
+  if (publishers.has(newNickname) && !publishers.has(oldNickname)) {
+    res.status(409).json({ error: "A camera with the new nickname already exists" });
+    return;
+  }
+
+  let updatedPlayers = 0;
+  for (const player of Object.values(gsiState.players)) {
+    if (player?.name === oldNickname) {
+      player.name = newNickname;
+      updatedPlayers += 1;
+    }
+  }
+
+  const renamedFocus = gsiState.currentFocus === oldNickname;
+  if (renamedFocus) {
+    gsiState.currentFocus = newNickname;
+  }
+
+  const oldKey = normalizeNicknameKey(oldNickname);
+  const newKey = normalizeNicknameKey(newNickname);
+  if (oldKey && newKey && oldKey !== newKey) {
+    if (fallbackFrames.has(oldKey) && !fallbackFrames.has(newKey)) {
+      const frameRecord = fallbackFrames.get(oldKey);
+      fallbackFrames.delete(oldKey);
+      fallbackFrames.set(newKey, frameRecord);
+    }
+
+    if (fallbackClients.has(oldKey) && !fallbackClients.has(newKey)) {
+      const clients = fallbackClients.get(oldKey);
+      fallbackClients.delete(oldKey);
+      fallbackClients.set(newKey, clients);
+    }
+  }
+
+  let renamedPublisher = false;
+  if (publishers.has(oldNickname)) {
+    if (publishers.has(newNickname)) {
+      res.status(409).json({ error: "A camera with the new nickname already exists" });
+      return;
+    }
+
+    const entry = publishers.get(oldNickname);
+    publishers.delete(oldNickname);
+    publishers.set(newNickname, entry);
+
+    const meta = socketMeta.get(entry.socket);
+    if (meta) {
+      meta.nickname = newNickname;
+    }
+
+    renamedPublisher = true;
+  }
+
+  if (renamedFocus) {
+    broadcastState();
+  }
+
+  if (renamedPublisher) {
+    broadcastPublisherList();
+  }
+
+  res.json({
+    ok: true,
+    updatedPlayers,
+    renamedPublisher,
+    currentFocus: gsiState.currentFocus,
+  });
+});
+
 app.get("/camera/:nickname", (_req, res) => {
   res.status(410).json({ error: "camera snapshots are not available in the WebRTC build" });
 });
