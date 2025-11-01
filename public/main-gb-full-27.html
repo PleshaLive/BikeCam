@@ -491,7 +491,10 @@
         }
 
         const connectionId = createConnectionId();
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const pc = new RTCPeerConnection({
+          iceServers: ICE_SERVERS,
+          iceTransportPolicy: "relay",
+        });
         const session = { nickname, connectionId, pc, stream: null, connectTimer: null };
         sessions.set(nickname, session);
 

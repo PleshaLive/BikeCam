@@ -210,51 +210,19 @@ const fallbackFrames = new Map();
 const fallbackClients = new Map();
 
 function loadIceServerConfig() {
-  const defaults = [
+  // Hard-code TURN configuration so every deployment consistently exposes
+  // the relay needed for clients behind restrictive NAT environments.
+  return [
     {
-      urls: ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "turn:193.169.241.100:3478?transport=udp",
+        "turn:193.169.241.100:3478?transport=tcp",
+      ],
+      username: "streamer",
+      credential: "VeryStrongPass123",
     },
   ];
-
-  const parsed = [];
-  const envConfig = process.env.ICE_SERVERS;
-
-  if (envConfig) {
-    try {
-      const value = JSON.parse(envConfig);
-      if (Array.isArray(value)) {
-        for (const entry of value) {
-          if (entry && typeof entry === "object" && entry.urls) {
-            parsed.push(entry);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("Failed to parse ICE_SERVERS. Using defaults.", error);
-    }
-  }
-
-  if (parsed.length === 0) {
-    parsed.push(...defaults);
-  }
-
-  const turnUrl = process.env.TURN_URL || process.env.TURN_SERVER || "";
-  if (turnUrl) {
-    const urls = turnUrl
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    if (urls.length) {
-      parsed.push({
-        urls,
-        username: process.env.TURN_USERNAME || process.env.TURN_USER || "",
-        credential: process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || "",
-      });
-    }
-  }
-
-  return parsed;
 }
 
 function writeMjpegFrame(res, frame) {

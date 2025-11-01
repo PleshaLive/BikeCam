@@ -2,7 +2,7 @@
   const defaultConfig = {
     iceServers: [
       {
-        urls: ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
+        urls: ["stun:stun.l.google.com:19302"],
       },
     ],
     fallback: {
@@ -14,17 +14,30 @@
   };
 
   let cachedConfig = null;
-  let fetchPromise = null;
+  let inflightPromise = null;
 
-  function cloneIceServers(iceServers) {
-    return iceServers.map((entry) => ({ ...entry, urls: Array.isArray(entry.urls) ? [...entry.urls] : entry.urls }));
+  function cloneIceServers(list) {
+    if (!Array.isArray(list)) {
+      return [];
+    }
+    return list.map((entry) => {
+      const clone = { ...entry };
+      if (Array.isArray(entry.urls)) {
+        clone.urls = [...entry.urls];
+      }
+      return clone;
+    });
   }
 
-  function applyConfigOverrides(base, overrides) {
-    const result = {
-      iceServers: cloneIceServers(base.iceServers || []),
-      fallback: { ...(base.fallback || {}) },
+  function cloneConfig(config) {
+    return {
+      iceServers: cloneIceServers(config?.iceServers) || [],
+      fallback: { ...(config?.fallback || {}) },
     };
+  }
+
+  function mergeConfig(base, overrides) {
+    const result = cloneConfig(base || defaultConfig);
 
     if (overrides) {
       if (Array.isArray(overrides.iceServers) && overrides.iceServers.length) {
@@ -33,7 +46,7 @@
 
       if (overrides.fallback && typeof overrides.fallback === "object") {
         result.fallback = {
-          ...(base.fallback || {}),
+          ...result.fallback,
           ...overrides.fallback,
         };
       }
@@ -42,59 +55,57 @@
     return result;
   }
 
-  async function fetchConfig() {
+  async function requestRemoteConfig() {
+    try {
+      const response = await fetch("/api/webrtc/config", { cache: "no-store" });
+      if (!response.ok) {
+        return mergeConfig(defaultConfig, null);
+      }
+      const data = await response.json();
+      return mergeConfig(defaultConfig, data);
+    } catch (error) {
+      return mergeConfig(defaultConfig, null);
+    }
+  }
+
+  async function resolveConfig() {
     if (cachedConfig) {
-      return cachedConfig;
+      return cloneConfig(cachedConfig);
     }
 
-    if (!fetchPromise) {
-      fetchPromise = (async () => {
-        try {
-          const response = await fetch("/api/webrtc/config", { cache: "no-store" });
-          if (response.ok) {
-            const data = await response.json();
-            cachedConfig = applyConfigOverrides(defaultConfig, data);
-            return cachedConfig;
-          }
-        } catch (error) {
-          // ignore fetch errors, fall back to defaults
-        }
-
-        cachedConfig = applyConfigOverrides(defaultConfig, null);
-        return cachedConfig;
-      })();
+    if (!inflightPromise) {
+      inflightPromise = requestRemoteConfig()
+        .catch(() => mergeConfig(defaultConfig, null))
+        .then((config) => {
+          cachedConfig = config;
+          inflightPromise = null;
+          return config;
+        });
     }
 
-    return fetchPromise;
+    const config = await inflightPromise;
+    return cloneConfig(config);
   }
 
-  function cloneConfig(config) {
-    return {
-      iceServers: cloneIceServers(config.iceServers || []),
-      fallback: { ...(config.fallback || {}) },
-    };
-  }
-
-  function createMjpegUrl(nickname, fallbackConfig) {
-    if (!nickname) {
-      return "";
-    }
-
-    const safeName = encodeURIComponent(nickname);
-    const endpoint = fallbackConfig?.endpoint || defaultConfig.fallback.endpoint;
-    return `${endpoint.replace(/\/$/, "")}/${safeName}?t=${Date.now()}`;
+  function currentFallbackEndpoint() {
+    const endpoint = cachedConfig?.fallback?.endpoint || defaultConfig.fallback.endpoint;
+    return typeof endpoint === "string" && endpoint.length ? endpoint : defaultConfig.fallback.endpoint;
   }
 
   window.WebRTC_SUPPORT = {
     async getConfig() {
-      const config = await fetchConfig();
-      return cloneConfig(config);
+      return resolveConfig();
     },
     hasWebRTCSupport() {
       return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
     },
     createMjpegUrl(nickname) {
-      return createMjpegUrl(nickname, cachedConfig || defaultConfig);
+      if (!nickname) {
+        return "";
+      }
+      const basePath = currentFallbackEndpoint().replace(/\/$/, "");
+      const safeName = encodeURIComponent(nickname);
+      return `${basePath}/${safeName}?t=${Date.now()}`;
     },
   };
 })();

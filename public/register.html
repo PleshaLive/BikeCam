@@ -763,7 +763,10 @@
               return null;
             }
             const key = peerKey(viewerSocketId, connectionId);
-            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            const pc = new RTCPeerConnection({
+              iceServers: ICE_SERVERS,
+              iceTransportPolicy: "relay",
+            });
             peers.set(key, { pc, viewerSocketId, connectionId, nickname });
 
             if (currentStream) {
