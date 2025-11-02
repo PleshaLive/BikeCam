@@ -46,7 +46,9 @@ function ensureOwnerIp(config) {
     config.allowedIps = [];
   }
 
-  const exists = config.allowedIps.some((entry) => normalizeIp(entry?.ip || entry) === OWNER_IP);
+  const exists = config.allowedIps.some(
+    (entry) => normalizeIp(entry?.ip || entry) === OWNER_IP
+  );
   if (!exists) {
     config.allowedIps.push({
       ip: OWNER_IP,
@@ -111,7 +113,10 @@ function loadAdminConfig() {
 
 async function persistAdminConfig() {
   await fsPromises.mkdir(ADMIN_DATA_DIR, { recursive: true });
-  await fsPromises.writeFile(ADMIN_CONFIG_PATH, JSON.stringify(adminConfig, null, 2));
+  await fsPromises.writeFile(
+    ADMIN_CONFIG_PATH,
+    JSON.stringify(adminConfig, null, 2)
+  );
 }
 
 function isIpAllowed(ip) {
@@ -256,7 +261,10 @@ const fallbackClients = new Map();
 function loadIceServerConfig() {
   const defaults = [
     {
-      urls: ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:global.stun.twilio.com:3478",
+      ],
     },
   ];
 
@@ -293,13 +301,26 @@ function loadIceServerConfig() {
       parsed.push({
         urls,
         username: process.env.TURN_USERNAME || process.env.TURN_USER || "",
-        credential: process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || "",
+        credential:
+          process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || "",
       });
     }
   }
 
   return parsed;
 }
+
+app.get("/api/webrtc/config", (req, res) => {
+  res.json({
+    iceServers: ICE_SERVER_CONFIG,
+    fallback: {
+      mjpeg: true,
+      endpoint: "/fallback/mjpeg",
+      heartbeatSeconds: 20,
+      maxFps: 5,
+    },
+  });
+});
 
 function writeMjpegFrame(res, frame) {
   if (!res || res.writableEnded || !frame?.buffer) {
@@ -478,7 +499,12 @@ function detachPublisher(nickname, socket) {
   broadcastPublisherList();
 }
 
-function stopViewerSubscription(meta, nickname, connectionId, notifyPublisher = true) {
+function stopViewerSubscription(
+  meta,
+  nickname,
+  connectionId,
+  notifyPublisher = true
+) {
   if (!meta || !connectionId) {
     return;
   }
@@ -533,7 +559,8 @@ app.post("/api/gsi", (req, res) => {
     const spectarget = data.player.spectarget ?? data.player?.state?.spectarget;
     const playerSteamId = data.player.steamid;
 
-    let focusName = typeof data.player.name === "string" ? data.player.name.trim() : "";
+    let focusName =
+      typeof data.player.name === "string" ? data.player.name.trim() : "";
     if (!focusName && typeof spectarget === "string") {
       const targetInfo = gsiState.players[spectarget];
       if (targetInfo?.name) {
@@ -542,7 +569,8 @@ app.post("/api/gsi", (req, res) => {
     }
 
     const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
-    const spectatingSelf = typeof spectarget === "string" && spectarget === playerSteamId;
+    const spectatingSelf =
+      typeof spectarget === "string" && spectarget === playerSteamId;
     const hasFocusTarget = Boolean(focusName) && hasValidSlot && !spectatingSelf;
 
     gsiState.currentFocus = hasFocusTarget ? focusName : null;
@@ -583,18 +611,6 @@ app.get("/players", (req, res) => {
   res.json({ players: [...names].sort() });
 });
 
-app.get("/api/webrtc/config", (_req, res) => {
-  res.json({
-    iceServers: ICE_SERVER_CONFIG,
-    fallback: {
-      mjpeg: true,
-      endpoint: "/fallback/mjpeg",
-      heartbeatSeconds: 20,
-      maxFps: 5,
-    },
-  });
-});
-
 app.get("/current-focus", (req, res) => {
   res.json({ currentFocus: gsiState.currentFocus });
 });
@@ -602,7 +618,9 @@ app.get("/current-focus", (req, res) => {
 app.get("/teams", (req, res) => {
   const teams = {};
 
-  const players = Object.values(gsiState.players).filter((player) => player?.name);
+  const players = Object.values(gsiState.players).filter(
+    (player) => player?.name
+  );
   players.sort((a, b) => {
     const slotA = a?.observer_slot ?? 99;
     const slotB = b?.observer_slot ?? 99;
@@ -684,7 +702,7 @@ app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) =>
   const normalizedIp = normalizeIp(req.params?.ip);
 
   if (!normalizedIp || !isValidIp(normalizedIp)) {
-    res.status(400).json({ error: "Invalid IPv4 address" });
+    res.status(400).json({ error: "Invalid IPV4 address" });
     return;
   }
 
@@ -693,7 +711,9 @@ app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) =>
     return;
   }
 
-  const index = adminConfig.allowedIps.findIndex((entry) => entry.ip === normalizedIp);
+  const index = adminConfig.allowedIps.findIndex(
+    (entry) => entry.ip === normalizedIp
+  );
   if (index === -1) {
     res.status(404).json({ error: "IP address not found" });
     return;
@@ -713,7 +733,8 @@ app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) =>
 });
 
 app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
-  const nickname = typeof req.body?.nickname === "string" ? req.body.nickname.trim() : "";
+  const nickname =
+    typeof req.body?.nickname === "string" ? req.body.nickname.trim() : "";
   if (!nickname) {
     res.status(400).json({ error: "nickname is required" });
     return;
@@ -730,7 +751,9 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
 });
 
 app.get("/camera/:nickname", (_req, res) => {
-  res.status(410).json({ error: "camera snapshots are not available in the WebRTC build" });
+  res
+    .status(410)
+    .json({ error: "camera snapshots are not available in the WebRTC build" });
 });
 
 app.post("/admin/focus", requireAdminAccess, (req, res) => {
@@ -749,7 +772,10 @@ app.post("/admin/focus", requireAdminAccess, (req, res) => {
 app.post("/api/fallback/frame", (req, res) => {
   const nicknameRaw = typeof req.body?.nickname === "string" ? req.body.nickname : "";
   const framePayload = typeof req.body?.frame === "string" ? req.body.frame : "";
-  const mimeType = typeof req.body?.mimeType === "string" && req.body.mimeType ? req.body.mimeType : "image/jpeg";
+  const mimeType =
+    typeof req.body?.mimeType === "string" && req.body.mimeType
+      ? req.body.mimeType
+      : "image/jpeg";
 
   const nicknameKey = normalizeNicknameKey(nicknameRaw);
   if (!nicknameKey || !framePayload) {
@@ -757,20 +783,7 @@ app.post("/api/fallback/frame", (req, res) => {
     return;
   }
 
-  const isActivePublisher = Array.from(publishers.keys()).some((value) => normalizeNicknameKey(value) === nicknameKey);
-  if (!isActivePublisher) {
-    res.status(409).json({ error: "publisher is not active" });
-    return;
-  }
-
-  let buffer;
-  try {
-    buffer = Buffer.from(framePayload, "base64");
-  } catch (error) {
-    res.status(400).json({ error: "invalid frame encoding" });
-    return;
-  }
-
+  const buffer = Buffer.from(framePayload, "base64");
   if (!buffer.length) {
     res.status(400).json({ error: "frame is empty" });
     return;
@@ -802,7 +815,10 @@ app.get("/fallback/mjpeg/:nickname", (req, res) => {
 
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   res.setHeader("Pragma", "no-cache");
-  res.setHeader("Content-Type", `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`);
+  res.setHeader(
+    "Content-Type",
+    `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`
+  );
 
   let clients = fallbackClients.get(nicknameKey);
   if (!clients) {
@@ -1105,8 +1121,6 @@ wss.on("connection", (socket) => {
 });
 
 const heartbeatInterval = setInterval(() => {
-  let performedCleanup = false;
-
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
       try {
@@ -1115,11 +1129,9 @@ const heartbeatInterval = setInterval(() => {
         if (meta) {
           if (meta.role === "publisher" && meta.nickname) {
             detachPublisher(meta.nickname, ws);
-            performedCleanup = true;
           } else if (meta.role === "viewer" && meta.subscriptions instanceof Map) {
             for (const [connectionId, nickname] of meta.subscriptions.entries()) {
               stopViewerSubscription(meta, nickname, connectionId, true);
-              performedCleanup = true;
             }
           }
 
@@ -1150,9 +1162,7 @@ const heartbeatInterval = setInterval(() => {
     }
   });
 
-  if (performedCleanup) {
-    broadcastPublisherList();
-  }
+  broadcastPublisherList();
 }, 30_000);
 
 heartbeatInterval.unref?.();
@@ -1163,7 +1173,9 @@ wss.on("close", () => {
 
 server.on("error", (error) => {
   if (error?.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use. Stop the other service or set PORT to a free port.`);
+    console.error(
+      `Port ${PORT} is already in use. Stop the other service or set PORT to a free port.`
+    );
     process.exit(1);
   }
   console.error("HTTP server error:", error);
