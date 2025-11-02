@@ -210,17 +210,25 @@ const fallbackFrames = new Map();
 const fallbackClients = new Map();
 
 function loadIceServerConfig() {
-  // Hard-code TURN configuration so every deployment consistently exposes
-  // the relay needed for clients behind restrictive NAT environments.
+  const rawTurnList = process.env.TURN_URL || "turn:turn.raptors.life:3478?transport=udp,turn:turn.raptors.life:3478?transport=tcp,turns:turn.raptors.life:5349?transport=tcp";
+  const turnUrls = rawTurnList
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const username = process.env.TURN_USERNAME || "streamer";
+  const credential = process.env.TURN_PASSWORD || "VeryStrongPass123";
+
+  const urls = [
+    "stun:stun.l.google.com:19302",
+    ...turnUrls,
+  ];
+
   return [
     {
-      urls: [
-        "stun:stun.l.google.com:19302",
-        "turn:193.169.241.100:3478?transport=udp",
-        "turn:193.169.241.100:3478?transport=tcp",
-      ],
-      username: "streamer",
-      credential: "VeryStrongPass123",
+      urls,
+      username,
+      credential,
     },
   ];
 }
@@ -507,7 +515,7 @@ app.get("/players", (req, res) => {
   res.json({ players: [...names].sort() });
 });
 
-app.get("/api/webrtc/config", (_req, res) => {
+app.get("/api/webrtc/config", (req, res) => {
   res.json({
     iceServers: ICE_SERVER_CONFIG,
     fallback: {
