@@ -420,6 +420,12 @@
 			font-size: 0.82rem;
 		}
 
+		.log-meta .nickname-tag {
+			text-transform: none;
+			letter-spacing: 0.04em;
+			font-weight: 600;
+		}
+
 		.log-meta time {
 			font-family: "Inter", monospace;
 			font-size: 0.78rem;
@@ -869,6 +875,31 @@
 			updateCardIndicator("cameras", true);
 		}
 
+		function resolveEventNickname(event) {
+			if (!event || typeof event !== "object") {
+				return "";
+			}
+
+			if (typeof event.nickname === "string" && event.nickname.trim()) {
+				return event.nickname.trim();
+			}
+
+			const oldNickname = typeof event.oldNickname === "string" ? event.oldNickname.trim() : "";
+			const newNickname = typeof event.newNickname === "string" ? event.newNickname.trim() : "";
+			if (oldNickname && newNickname) {
+				return `${oldNickname} -> ${newNickname}`;
+			}
+			if (oldNickname || newNickname) {
+				return oldNickname || newNickname;
+			}
+
+			if (typeof event.focusName === "string" && event.focusName.trim()) {
+				return event.focusName.trim();
+			}
+
+			return "";
+		}
+
 		function renderLogs(events) {
 			const container = document.getElementById("logContainer");
 			container.innerHTML = "";
@@ -909,6 +940,14 @@
 				typeEl.className = "type";
 				typeEl.textContent = event.type || "event";
 				meta.appendChild(typeEl);
+
+				const nicknameLabel = resolveEventNickname(event);
+				if (nicknameLabel) {
+					const nicknameTag = document.createElement("span");
+					nicknameTag.className = "tag nickname-tag";
+					nicknameTag.textContent = nicknameLabel;
+					meta.appendChild(nicknameTag);
+				}
 				row.appendChild(meta);
 
 				const payload = document.createElement("pre");
