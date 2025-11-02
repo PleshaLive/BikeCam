@@ -130,6 +130,63 @@ let gsiState = {
   },
 };
 
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_GRACE_MS = 60_000;
+const MAX_SYSTEM_EVENTS = 300;
+
+const systemEvents = [];
+
+function logSystemEvent(type, details = {}) {
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type,
+    timestamp: new Date().toISOString(),
+    ...details,
+  };
+
+  systemEvents.push(entry);
+  if (systemEvents.length > MAX_SYSTEM_EVENTS) {
+    systemEvents.shift();
+  }
+
+  return entry;
+}
+
+function getRecentSystemEvents(limit = 100) {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, MAX_SYSTEM_EVENTS)) : 100;
+  return systemEvents.slice(-safeLimit);
+}
+
+function extractIpFromWsRequest(req) {
+  if (!req) {
+    return "";
+  }
+
+  const forwarded = req.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length) {
+    const candidate = forwarded.split(",")[0].trim();
+    if (candidate) {
+      return normalizeIp(candidate);
+    }
+  }
+
+  return normalizeIp(req.socket?.remoteAddress || "");
+}
+
+function updateHeartbeat(meta) {
+  if (!meta) {
+    return;
+  }
+  meta.lastHeartbeat = Date.now();
+}
+
+function computePublisherLastSeenMs(meta, now) {
+  if (!meta?.lastHeartbeat) {
+    return null;
+  }
+  return Math.max(0, now - meta.lastHeartbeat);
+}
+
 function extractClientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length) {
@@ -156,23 +213,28 @@ function requireAdminAccess(req, res, next) {
 }
 
 function collectPublisherStats() {
+  const now = Date.now();
   const stats = [];
 
   for (const [nickname, entry] of publishers.entries()) {
     let connectionCount = 0;
     const viewers = [];
-
-    for (const [viewerSocketId, connectionIds] of entry.viewers.entries()) {
-      const size = connectionIds.size;
-      connectionCount += size;
-      viewers.push({ viewerSocketId, connections: size });
+    for (const connectionIds of entry.viewers.values()) {
+      connectionCount += connectionIds.size;
     }
 
+    for (const [viewerSocketId, connectionIds] of entry.viewers.entries()) {
+      viewers.push({ viewerSocketId, connections: connectionIds.size });
+    }
+
+    const meta = socketMeta.get(entry.socket);
     stats.push({
       nickname,
-      connections: connectionCount,
+      connectionCount,
+      uniqueViewers: entry.viewers.size,
+      role: meta?.role || "publisher",
+      lastSeenMsAgo: computePublisherLastSeenMs(meta, now),
       viewerCount: connectionCount,
-      uniqueViewers: viewers.length,
       viewers,
     });
   }
@@ -231,6 +293,18 @@ function loadIceServerConfig() {
       credential,
     },
   ];
+}
+
+function buildTurnInfo() {
+  const primary = Array.isArray(ICE_SERVER_CONFIG) && ICE_SERVER_CONFIG.length ? ICE_SERVER_CONFIG[0] : null;
+  const urls = Array.isArray(primary?.urls) ? primary.urls : [];
+  const hasTLS = urls.some((url) => url.startsWith("turns:") || /transport=tls/i.test(url));
+
+  return {
+    urls,
+    username: primary?.username || null,
+    hasTLS,
+  };
 }
 
 function writeMjpegFrame(res, frame) {
@@ -365,7 +439,7 @@ function dropViewerEntry(nickname, viewerSocketId, connectionId) {
   }
 }
 
-function detachPublisher(nickname, socket) {
+function detachPublisher(nickname, socket, reason = "unknown") {
   if (!nickname) {
     return;
   }
@@ -408,6 +482,12 @@ function detachPublisher(nickname, socket) {
 
   clearFallbackForNickname(nickname);
   broadcastPublisherList();
+
+  logSystemEvent("publisher_detached", {
+    nickname,
+    reason,
+  });
+  console.log(`[WS] Publisher detached: ${nickname} (reason: ${reason})`);
 }
 
 function stopViewerSubscription(meta, nickname, connectionId, notifyPublisher = true) {
@@ -566,14 +646,26 @@ app.get("/admin-panel", requireAdminAccess, (_req, res) => {
 });
 
 app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
+  const players = Object.values(gsiState.players);
+
   res.json({
     allowedIps: adminConfig.allowedIps,
     publishers: collectPublisherStats(),
+    turnInfo: buildTurnInfo(),
     currentFocus: gsiState.currentFocus,
     teamNames: gsiState.teamNames,
-    roster: Object.values(gsiState.players),
+    players,
+    roster: players,
     siteLinks: SITE_LINKS,
     ownerIp: OWNER_IP,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
+app.get("/api/admin/logs", requireAdminAccess, (req, res) => {
+  const requestedLimit = Number.parseInt(req.query?.limit, 10);
+  res.json({
+    events: getRecentSystemEvents(requestedLimit || 100),
     updatedAt: new Date().toISOString(),
   });
 });
@@ -609,6 +701,12 @@ app.post("/api/admin/allowed-ips", requireAdminAccess, async (req, res) => {
     return;
   }
 
+  logSystemEvent("admin_allow_ip_added", {
+    adminIp: req.adminClientIp,
+    allowedIp: normalizedIp,
+    label,
+  });
+
   res.json({ ok: true, allowedIps: adminConfig.allowedIps });
 });
 
@@ -641,6 +739,11 @@ app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) =>
     return;
   }
 
+  logSystemEvent("admin_allow_ip_removed", {
+    adminIp: req.adminClientIp,
+    removedIp: normalizedIp,
+  });
+
   res.json({ ok: true, allowedIps: adminConfig.allowedIps });
 });
 
@@ -657,7 +760,11 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
     return;
   }
 
-  detachPublisher(nickname, entry.socket);
+  detachPublisher(nickname, entry.socket, "admin_kick");
+  logSystemEvent("admin_kick", {
+    adminIp: req.adminClientIp,
+    nickname,
+  });
   res.json({ ok: true, nickname });
 });
 
@@ -735,6 +842,13 @@ app.post("/api/admin/rename", requireAdminAccess, (req, res) => {
   if (renamedPublisher) {
     broadcastPublisherList();
   }
+
+  logSystemEvent("admin_rename", {
+    adminIp: req.adminClientIp,
+    oldNickname,
+    newNickname,
+    renamedPublisher,
+  });
 
   res.json({
     ok: true,
@@ -860,7 +974,7 @@ function handleHello(socket, meta, payload) {
     }
 
     if (meta.nickname && meta.nickname !== nickname) {
-      detachPublisher(meta.nickname, socket);
+      detachPublisher(meta.nickname, socket, "publisher_replaced");
     }
 
     let entry = existing;
@@ -871,6 +985,12 @@ function handleHello(socket, meta, payload) {
 
     meta.role = "publisher";
     meta.nickname = nickname;
+    logSystemEvent("publisher_registered", {
+      socketId: meta.id,
+      nickname,
+      ip: meta.ip || null,
+    });
+    console.log(`[WS] Publisher ready: ${nickname} (${meta.id}) from ${meta.ip || "unknown"}`);
     sendJson(socket, { type: "PUBLISHER_REGISTERED", nickname });
     broadcastPublisherList();
     return;
@@ -878,6 +998,12 @@ function handleHello(socket, meta, payload) {
 
   if (role === "viewer" || role === "admin") {
     meta.role = role;
+    logSystemEvent("socket_identified", {
+      socketId: meta.id,
+      role,
+      ip: meta.ip || null,
+    });
+    console.log(`[WS] ${role} connected: ${meta.id} from ${meta.ip || "unknown"}`);
     sendJson(socket, { type: "VIEWER_REGISTERED", role });
     sendJson(socket, { type: "ACTIVE_PUBLISHERS", publishers: getActivePublishers() });
     return;
@@ -1022,7 +1148,7 @@ function handlePublisherPeerClosed(meta, payload) {
   }
 }
 
-wss.on("connection", (socket) => {
+wss.on("connection", (socket, request) => {
   clients.add(socket);
 
   const socketId = `ws-${nextSocketId++}`;
@@ -1031,10 +1157,19 @@ wss.on("connection", (socket) => {
     role: null,
     nickname: null,
     subscriptions: new Map(),
+    connectedAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    ip: extractIpFromWsRequest(request),
   };
 
   socketMeta.set(socket, meta);
   socketById.set(socketId, socket);
+
+  logSystemEvent("socket_connected", {
+    socketId,
+    ip: meta.ip || null,
+  });
+  console.log(`[WS] Connection opened: ${socketId} from ${meta.ip || "unknown"}`);
 
   sendJson(socket, {
     type: "WELCOME",
@@ -1045,6 +1180,8 @@ wss.on("connection", (socket) => {
 
   socket.on("message", (rawMessage) => {
     let payload;
+
+    updateHeartbeat(meta);
 
     try {
       payload = JSON.parse(rawMessage.toString());
@@ -1095,7 +1232,7 @@ wss.on("connection", (socket) => {
     }
 
     if (metaInfo.role === "publisher" && metaInfo.nickname) {
-      detachPublisher(metaInfo.nickname, socket);
+      detachPublisher(metaInfo.nickname, socket, "socket_closed");
     }
 
     if (metaInfo.role === "viewer") {
@@ -1105,6 +1242,16 @@ wss.on("connection", (socket) => {
       }
     }
 
+    logSystemEvent("socket_disconnected", {
+      socketId: metaInfo.id,
+      role: metaInfo.role || null,
+      nickname: metaInfo.nickname || null,
+      ip: metaInfo.ip || null,
+      durationMs: metaInfo.connectedAt ? Date.now() - metaInfo.connectedAt : null,
+      lastSeenMsAgo: computePublisherLastSeenMs(metaInfo, Date.now()),
+    });
+    console.log(`[WS] Connection closed: ${metaInfo.role || "socket"} ${metaInfo.nickname || metaInfo.id} from ${metaInfo.ip || "unknown"}`);
+
     socketMeta.delete(socket);
     socketById.delete(socketId);
   });
@@ -1112,6 +1259,52 @@ wss.on("connection", (socket) => {
   socket.on("error", (error) => {
     console.error("WebSocket error:", error);
   });
+
+  socket.on("pong", () => {
+    updateHeartbeat(meta);
+  });
+});
+
+const heartbeatInterval = setInterval(() => {
+  const now = Date.now();
+  for (const socket of clients) {
+    if (socket.readyState !== WebSocket.OPEN) {
+      continue;
+    }
+    const meta = socketMeta.get(socket);
+    if (!meta) {
+      continue;
+    }
+
+    if (now - meta.lastHeartbeat > HEARTBEAT_GRACE_MS) {
+      logSystemEvent("heartbeat_timeout", {
+        socketId: meta.id,
+        role: meta.role || null,
+        nickname: meta.nickname || null,
+        ip: meta.ip || null,
+        lastHeartbeatMsAgo: now - meta.lastHeartbeat,
+      });
+      console.warn(`[WS] Terminating stale connection: ${meta.role || "socket"} ${meta.nickname || meta.id}`);
+      try {
+        socket.terminate();
+      } catch (error) {
+        console.error("Failed to terminate socket after heartbeat timeout", error);
+      }
+      continue;
+    }
+
+    try {
+      socket.ping();
+    } catch (error) {
+      console.error("Failed to ping socket", error);
+    }
+  }
+}, HEARTBEAT_INTERVAL_MS);
+
+heartbeatInterval.unref?.();
+
+wss.on("close", () => {
+  clearInterval(heartbeatInterval);
 });
 
 server.on("error", (error) => {
