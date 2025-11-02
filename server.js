@@ -187,6 +187,15 @@ function collectPublisherStats() {
   return stats;
 }
 
+const allowedOrigins = [
+  "https://bikecam.onrender.com",
+  "https://raptors.life",
+  "http://localhost:3000",
+];
+
+const adminUser = process.env.ADMIN_USER || "admin";
+const adminPass = process.env.ADMIN_PASS || "changeme";
+
 const app = express();
 app.set("trust proxy", true);
 app.use(
@@ -213,7 +222,7 @@ app.use(
 app.use(bodyParser.json({ limit: "5mb" }));
 
 app.use(
-  ["/admin.html", "/admin", "/admin-panel", "/api/admin"],
+  ["/admin.html", "/admin", "/admin-panel", "/api/admin", "/api/admin/*"],
   basicAuth({
     users: { [adminUser]: adminPass },
     challenge: true,
@@ -238,15 +247,6 @@ const SITE_LINKS = [
   { label: "T Cameras", href: "/t-side-gb-27.html" },
   { label: "Register Camera", href: "/register.html" },
 ];
-
-const allowedOrigins = [
-  "https://bikecam.onrender.com",
-  "https://raptors.life",
-  "http://localhost:3000",
-];
-
-const adminUser = process.env.ADMIN_USER || "admin";
-const adminPass = process.env.ADMIN_PASS || "changeme";
 
 const ICE_SERVER_CONFIG = loadIceServerConfig();
 const MJPEG_BOUNDARY = "frame";
