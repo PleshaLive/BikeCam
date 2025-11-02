@@ -1,732 +1,1111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Broadcast Admin Console</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #10121f;
-      --panel: #1a1e32;
-      --panel-alt: #222741;
-      --panel-strong: #2a3052;
-      --primary: #6d8bff;
-      --danger: #ff6b6b;
-      --text: #f5f7ff;
-      --muted: rgba(245, 247, 255, 0.65);
-      --border: rgba(255, 255, 255, 0.08);
-      --success: #5bd997;
-    }
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Broadcast Control Center</title>
+	<style>
+		@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
-    * {
-      box-sizing: border-box;
-    }
+		:root {
+			color-scheme: dark;
+			--bg: #0d111a;
+			--card-bg: #13161f;
+			--card-border: #1e2230;
+			--card-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+			--surface: #181c27;
+			--surface-alt: #202633;
+			--surface-hover: #22283a;
+			--text-primary: #e7ecff;
+			--text-secondary: rgba(231, 236, 255, 0.72);
+			--accent: #ffd369;
+			--success: #00ff9c;
+			--danger: #ff4b4b;
+			--muted-border: rgba(255, 255, 255, 0.08);
+			--scrollbar: rgba(255, 255, 255, 0.12);
+			--shadow-glow: rgba(0, 255, 156, 0.45);
+		}
 
-    body {
-      margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      padding: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
-    }
+		* {
+			box-sizing: border-box;
+		}
 
-    header {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
+		body {
+			margin: 0;
+			background: var(--bg);
+			color: var(--text-primary);
+			font-family: "Inter", "Segoe UI", Tahoma, sans-serif;
+			min-height: 100vh;
+		}
 
-    h1 {
-      margin: 0;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      font-size: 1.8rem;
-    }
+		.app {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
 
-    nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
+		.top-bar {
+			position: sticky;
+			top: 0;
+			z-index: 40;
+			backdrop-filter: blur(8px);
+			background: rgba(13, 17, 26, 0.85);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		}
 
-    nav a {
-      text-decoration: none;
-      padding: 8px 14px;
-      border-radius: 999px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.88rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      transition: background 0.2s ease;
-    }
+		.top-bar-inner {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 16px;
+			padding: 18px 32px;
+		}
 
-    nav a:hover {
-      background: var(--panel-alt);
-    }
+		.brand {
+			flex: 1 1 220px;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+		}
 
-    main {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-      gap: 24px;
-    }
+		.brand h1 {
+			margin: 0;
+			font-size: 1.15rem;
+			letter-spacing: 0.32em;
+			text-transform: uppercase;
+			font-weight: 600;
+		}
 
-    section {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
+		.brand span {
+			font-size: 0.75rem;
+			color: var(--text-secondary);
+			letter-spacing: 0.16em;
+			text-transform: uppercase;
+		}
 
-    section.wide {
-      grid-column: 1 / -1;
-    }
+		nav {
+			display: flex;
+			gap: 12px;
+			flex-wrap: wrap;
+		}
 
-    h2 {
-      margin: 0;
-      font-size: 1.05rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
+		nav a {
+			text-decoration: none;
+			padding: 10px 18px;
+			border-radius: 999px;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			background: #141925;
+			color: var(--text-primary);
+			font-size: 0.82rem;
+			letter-spacing: 0.14em;
+			text-transform: uppercase;
+			font-weight: 600;
+			transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+		}
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
+		nav a:hover {
+			background: #1d2332;
+			border-color: rgba(255, 211, 105, 0.4);
+			transform: translateY(-1px);
+		}
 
-    th,
-    td {
-      border-bottom: 1px solid var(--border);
-      padding: 10px 6px;
-      text-align: left;
-      vertical-align: top;
-    }
+		#messageBox {
+			width: 100%;
+			padding: 0 32px 18px;
+			font-size: 0.9rem;
+			color: var(--success);
+		}
 
-    th {
-      font-weight: 600;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      font-size: 0.74rem;
-    }
+		#messageBox.error {
+			color: var(--danger);
+		}
 
-    tbody tr:last-child td {
-      border-bottom: none;
-    }
+		.main-content {
+			flex: 1;
+			padding: 32px;
+			display: flex;
+			flex-direction: column;
+			gap: 28px;
+		}
 
-    tbody tr.stale {
-      background: rgba(255, 0, 0, 0.08);
-    }
+		.dashboard-grid {
+			display: grid;
+			gap: 24px;
+			grid-template-columns: 1fr;
+		}
 
-    .status-board {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-    }
+		.span-4,
+		.span-5,
+		.span-6,
+		.span-7,
+		.span-8,
+		.span-12 {
+			grid-column: span 1;
+		}
 
-    .status-card {
-      background: var(--panel-alt);
-      border-radius: 14px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      border: 1px solid var(--border);
-    }
+		.card {
+			background: var(--card-bg);
+			border: 1px solid var(--card-border);
+			border-radius: 12px;
+			box-shadow: var(--card-shadow);
+			padding: 22px 24px;
+			display: flex;
+			flex-direction: column;
+			gap: 20px;
+			position: relative;
+			overflow: hidden;
+			transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+		}
 
-    .status-card span {
-      font-size: 0.72rem;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
+		.card.flash {
+			animation: flashBorder 0.9s ease;
+		}
 
-    .status-card strong {
-      font-size: 1.05rem;
-      line-height: 1.35;
-    }
+		@keyframes flashBorder {
+			0% {
+				box-shadow: 0 0 0 0 var(--shadow-glow);
+				border-color: rgba(0, 255, 156, 0.2);
+			}
+			60% {
+				box-shadow: 0 0 28px 0 rgba(0, 255, 156, 0.18);
+				border-color: rgba(0, 255, 156, 0.35);
+			}
+			100% {
+				box-shadow: var(--card-shadow);
+				border-color: var(--card-border);
+			}
+		}
 
-    .tag {
-      display: inline-block;
-      background: #222;
-      border: 1px solid #555;
-      border-radius: 4px;
-      padding: 2px 6px;
-      font-size: 0.75rem;
-      line-height: 1.2;
-      margin-right: 6px;
-      margin-bottom: 4px;
-    }
+		.card-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+		}
 
-    .stretch-table {
-      max-height: 320px;
-      overflow-y: auto;
-      border-radius: 12px;
-    }
+		h2 {
+			margin: 0;
+			font-size: 0.92rem;
+			font-weight: 600;
+			letter-spacing: 0.24em;
+			text-transform: uppercase;
+			color: var(--text-secondary);
+		}
 
-    .log-payload {
-      max-height: 180px;
-      overflow: auto;
-      background: var(--panel-strong);
-      border-radius: 8px;
-      padding: 8px;
-      font-family: "Fira Code", "Consolas", "Courier New", monospace;
-      font-size: 0.75rem;
-      color: var(--text);
-      border: 1px solid var(--border);
-      white-space: pre-wrap;
-    }
+		.card-status {
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			border: 2px solid rgba(0, 0, 0, 0.45);
+			background: var(--danger);
+			box-shadow: 0 0 0 4px rgba(255, 75, 75, 0.16);
+			transition: background 0.3s ease, box-shadow 0.3s ease;
+		}
 
-    form {
-      display: grid;
-      gap: 10px;
-    }
+		.card-status.active {
+			background: var(--success);
+			box-shadow: 0 0 0 4px rgba(0, 255, 156, 0.15);
+		}
 
-    label {
-      font-size: 0.75rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
+		.status-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+			gap: 16px;
+		}
 
-    input,
-    button {
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--panel-alt);
-      color: var(--text);
-      font-size: 0.95rem;
-    }
+		.status-chip {
+			background: var(--surface);
+			border-radius: 14px;
+			border: 1px solid rgba(255, 255, 255, 0.04);
+			padding: 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			transition: transform 0.2s ease, border-color 0.2s ease;
+		}
 
-    input:focus {
-      outline: 2px solid var(--primary);
-    }
+		.status-chip:hover {
+			transform: translateY(-2px);
+			border-color: rgba(255, 211, 105, 0.3);
+		}
 
-    button {
-      cursor: pointer;
-      border: none;
-      background: linear-gradient(135deg, var(--primary), #3752c7);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
+		.status-chip span {
+			font-size: 0.72rem;
+			font-weight: 500;
+			letter-spacing: 0.14em;
+			text-transform: uppercase;
+			color: var(--text-secondary);
+		}
 
-    button.danger {
-      background: linear-gradient(135deg, var(--danger), #cc5454);
-    }
+		.status-chip strong {
+			font-size: 1.5rem;
+			font-weight: 600;
+			color: var(--text-primary);
+			letter-spacing: 0.05em;
+		}
 
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
+		.status-chip strong.accent {
+			color: var(--accent);
+		}
 
-    #messageBox {
-      min-height: 22px;
-      font-size: 0.9rem;
-      color: var(--success);
-    }
+		.status-chip strong.small {
+			font-size: 1rem;
+		}
 
-    #messageBox.error {
-      color: var(--danger);
-    }
+		.table-wrapper {
+			background: var(--surface);
+			border-radius: 12px;
+			overflow: hidden;
+			border: 1px solid rgba(255, 255, 255, 0.05);
+		}
 
-    @media (max-width: 720px) {
-      body {
-        padding: 16px;
-      }
+		.table-scrollable {
+			max-height: 340px;
+			overflow: auto;
+		}
 
-      main {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+		table {
+			width: 100%;
+			border-collapse: separate;
+			border-spacing: 0;
+			font-size: 0.85rem;
+			color: var(--text-primary);
+		}
+
+		thead th {
+			position: sticky;
+			top: 0;
+			background: var(--surface-alt);
+			letter-spacing: 0.18em;
+			text-transform: uppercase;
+			font-weight: 600;
+			font-size: 0.68rem;
+			color: var(--text-secondary);
+			padding: 14px 16px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			z-index: 1;
+		}
+
+		tbody td {
+			padding: 14px 16px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			vertical-align: middle;
+		}
+
+		tbody tr:last-child td {
+			border-bottom: none;
+		}
+
+		tbody tr:hover {
+			background: var(--surface-hover);
+		}
+
+		tbody tr.stale {
+			background: rgba(255, 40, 40, 0.07);
+		}
+
+		tbody tr.stale:hover {
+			background: rgba(255, 40, 40, 0.12);
+		}
+
+		.tag {
+			display: inline-flex;
+			align-items: center;
+			padding: 2px 8px;
+			border-radius: 6px;
+			background: rgba(255, 211, 105, 0.08);
+			border: 1px solid rgba(255, 211, 105, 0.45);
+			color: var(--accent);
+			font-size: 0.72rem;
+			font-weight: 500;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			margin: 0 6px 6px 0;
+			white-space: nowrap;
+		}
+
+		.yes {
+			color: var(--success);
+			font-weight: 600;
+		}
+
+		.no {
+			color: var(--danger);
+			font-weight: 600;
+		}
+
+		.accent-text {
+			color: var(--accent);
+			font-weight: 600;
+			letter-spacing: 0.02em;
+		}
+
+		.btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 6px;
+			min-width: 96px;
+			padding: 12px 16px;
+			border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			background: #23293b;
+			color: var(--text-primary);
+			font-size: 0.78rem;
+			text-transform: uppercase;
+			letter-spacing: 0.14em;
+			font-weight: 600;
+			cursor: pointer;
+			transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+		}
+
+		.btn:hover {
+			background: #2b344b;
+			transform: translateY(-1px);
+		}
+
+		.btn.danger {
+			background: rgba(255, 75, 75, 0.18);
+			border-color: rgba(255, 75, 75, 0.35);
+		}
+
+		.btn.danger:hover {
+			background: #ff4b4b;
+			border-color: #ff4b4b;
+			transform: scale(1.05);
+		}
+
+		.log-scroll {
+			max-height: 400px;
+			overflow: auto;
+			scrollbar-width: thin;
+			scrollbar-color: var(--scrollbar) transparent;
+		}
+
+		.log-scroll::-webkit-scrollbar {
+			width: 10px;
+		}
+
+		.log-scroll::-webkit-scrollbar-track {
+			background: transparent;
+		}
+
+		.log-scroll::-webkit-scrollbar-thumb {
+			background: var(--scrollbar);
+			border-radius: 8px;
+		}
+
+		.log-row {
+			display: grid;
+			grid-template-columns: minmax(200px, 280px) 1fr;
+			gap: 18px;
+			padding: 18px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			background: var(--surface);
+			transition: background 0.2s ease;
+		}
+
+		.log-row:last-child {
+			border-bottom: none;
+		}
+
+		.log-row:hover {
+			background: var(--surface-hover);
+		}
+
+		.log-meta {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			font-size: 0.82rem;
+		}
+
+		.log-meta time {
+			font-family: "Inter", monospace;
+			font-size: 0.78rem;
+			color: var(--text-secondary);
+		}
+
+		.log-meta .type {
+			font-weight: 600;
+			letter-spacing: 0.12em;
+			text-transform: uppercase;
+			color: var(--accent);
+		}
+
+		.log-payload {
+			background: #10131d;
+			border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.05);
+			padding: 14px;
+			font-family: "Fira Code", "Consolas", "Courier New", monospace;
+			font-size: 0.78rem;
+			color: var(--text-primary);
+			white-space: pre-wrap;
+			word-break: break-word;
+			margin: 0;
+		}
+
+		form {
+			display: grid;
+			gap: 12px;
+		}
+
+		label {
+			font-size: 0.7rem;
+			font-weight: 600;
+			letter-spacing: 0.18em;
+			text-transform: uppercase;
+			color: var(--text-secondary);
+		}
+
+		input {
+			background: #111623;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 10px;
+			padding: 12px 14px;
+			color: var(--text-primary);
+			font-size: 0.9rem;
+			transition: border-color 0.2s ease, box-shadow 0.2s ease;
+		}
+
+		input:focus {
+			outline: none;
+			border-color: rgba(255, 211, 105, 0.65);
+			box-shadow: 0 0 0 3px rgba(255, 211, 105, 0.1);
+		}
+
+		@media (min-width: 1024px) and (max-width: 1279px) {
+			.dashboard-grid {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.span-6,
+			.span-4,
+			.span-5 {
+				grid-column: span 1;
+			}
+
+			.span-8,
+			.span-7,
+			.span-12 {
+				grid-column: span 2;
+			}
+
+			.log-row {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		@media (min-width: 1280px) {
+			.dashboard-grid {
+				grid-template-columns: repeat(12, minmax(0, 1fr));
+			}
+
+			.span-6 {
+				grid-column: span 6;
+			}
+
+			.span-4 {
+				grid-column: span 4;
+			}
+
+			.span-8 {
+				grid-column: span 8;
+			}
+
+			.span-12 {
+				grid-column: span 12;
+			}
+		}
+
+		@media (max-width: 1023px) {
+			.top-bar-inner {
+				padding: 18px 20px;
+			}
+
+			.main-content {
+				padding: 24px;
+			}
+
+			.log-row {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		@media (prefers-reduced-motion: reduce) {
+			* {
+				animation-duration: 0.001ms !important;
+				animation-iteration-count: 1 !important;
+				transition-duration: 0.001ms !important;
+				scroll-behavior: auto !important;
+			}
+		}
+	</style>
 </head>
 <body>
-  <header>
-    <h1>Broadcast Control Center</h1>
-    <div id="messageBox"></div>
-    <nav id="navLinks"></nav>
-  </header>
+	<div class="app">
+		<header class="top-bar">
+			<div class="top-bar-inner">
+				<div class="brand">
+					<h1>BROADCAST CONTROL CENTER</h1>
+					<span>CS2 Camera System Monitor</span>
+				</div>
+				<nav id="navLinks"></nav>
+			</div>
+			<div id="messageBox"></div>
+		</header>
 
-  <main>
-    <section>
-      <h2>Live Status</h2>
-      <div class="status-board">
-        <div class="status-card">
-          <span>Current Focus</span>
-          <strong id="focusName">—</strong>
-        </div>
-        <div class="status-card">
-          <span>CT Team</span>
-          <strong id="ctTeamName">—</strong>
-        </div>
-        <div class="status-card">
-          <span>T Team</span>
-          <strong id="tTeamName">—</strong>
-        </div>
-        <div class="status-card">
-          <span>Active Cameras</span>
-          <strong id="cameraCount">0</strong>
-        </div>
-        <div class="status-card">
-          <span>Last Sync</span>
-          <strong id="updatedAt">—</strong>
-        </div>
-      </div>
-    </section>
+		<main class="main-content">
+			<div class="dashboard-grid" id="dashboardGrid">
+				<section class="card span-6" data-section="live-status">
+					<div class="card-header">
+						<h2>Live Status</h2>
+						<span class="card-status" aria-hidden="true"></span>
+					</div>
+					<div class="status-grid">
+						<div class="status-chip">
+							<span>Current Focus</span>
+							<strong id="focusName" class="accent">—</strong>
+						</div>
+						<div class="status-chip">
+							<span>CT Team</span>
+							<strong id="ctTeamName" class="accent small">—</strong>
+						</div>
+						<div class="status-chip">
+							<span>T Team</span>
+							<strong id="tTeamName" class="accent small">—</strong>
+						</div>
+						<div class="status-chip">
+							<span>Active Cameras</span>
+							<strong id="cameraCount" class="accent">0</strong>
+						</div>
+						<div class="status-chip">
+							<span>Last Sync</span>
+							<strong id="updatedAt" class="small">—</strong>
+						</div>
+					</div>
+				</section>
 
-    <section>
-      <h2>TURN / STUN Status</h2>
-      <div class="stretch-table">
-        <table>
-          <thead>
-            <tr>
-              <th>TURN Username</th>
-              <th>TLS</th>
-              <th>Servers</th>
-            </tr>
-          </thead>
-          <tbody id="turnTableBody"></tbody>
-        </table>
-      </div>
-    </section>
+				<section class="card span-6" data-section="turn-status">
+					<div class="card-header">
+						<h2>Turn / Stun Status</h2>
+						<span class="card-status" aria-hidden="true"></span>
+					</div>
+					<div class="table-wrapper">
+						<div class="table-scrollable">
+							<table>
+								<thead>
+									<tr>
+										<th>Turn Username</th>
+										<th>TLS</th>
+										<th>Servers</th>
+									</tr>
+								</thead>
+								<tbody id="turnTableBody"></tbody>
+							</table>
+						</div>
+					</div>
+				</section>
 
-    <section class="wide">
-      <h2>Active Cameras</h2>
-      <div class="stretch-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Nickname</th>
-              <th>Role</th>
-              <th>Last Seen</th>
-              <th>Unique Viewers</th>
-              <th>Connections</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="cameraTableBody"></tbody>
-        </table>
-      </div>
-    </section>
+				<section class="card span-8" data-section="cameras">
+					<div class="card-header">
+						<h2>Active Cameras</h2>
+						<span class="card-status" aria-hidden="true"></span>
+					</div>
+					<div class="table-wrapper">
+						<div class="table-scrollable">
+							<table>
+								<thead>
+									<tr>
+										<th>Nickname</th>
+										<th>Role</th>
+										<th>Last Seen</th>
+										<th>Unique Viewers</th>
+										<th>Connections</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody id="cameraTableBody"></tbody>
+							</table>
+						</div>
+					</div>
+				</section>
 
-    <section class="wide">
-      <h2>System Events (last 50)</h2>
-      <div class="stretch-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Type</th>
-              <th>Payload</th>
-            </tr>
-          </thead>
-          <tbody id="logTableBody"></tbody>
-        </table>
-      </div>
-    </section>
+				<section class="card span-4" data-section="allowed-ips">
+					<div class="card-header">
+						<h2>Allowed Admin IPs</h2>
+						<span class="card-status" aria-hidden="true"></span>
+					</div>
+					<div class="table-wrapper">
+						<div class="table-scrollable">
+							<table>
+								<thead>
+									<tr>
+										<th>IP Address</th>
+										<th>Label</th>
+										<th>Added</th>
+										<th></th>
+									</tr>
+								</thead>
+								<tbody id="ipTableBody"></tbody>
+							</table>
+						</div>
+					</div>
+					<form id="addIpForm">
+						<label for="ipInput">Add new admin IP</label>
+						<input id="ipInput" name="ip" type="text" placeholder="e.g. 203.0.113.5" required />
+						<label for="labelInput">Label (optional)</label>
+						<input id="labelInput" name="label" type="text" placeholder="Who is this for?" />
+						<button class="btn" type="submit">Add IP</button>
+					</form>
+				</section>
 
-    <section>
-      <h2>Allowed Admin IPs</h2>
-      <div class="stretch-table">
-        <table>
-          <thead>
-            <tr>
-              <th>IP Address</th>
-              <th>Label</th>
-              <th>Added</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="ipTableBody"></tbody>
-        </table>
-      </div>
-      <form id="addIpForm">
-        <label for="ipInput">Add new admin IP</label>
-        <input id="ipInput" name="ip" type="text" placeholder="e.g. 203.0.113.5" required />
-        <label for="labelInput">Label (optional)</label>
-        <input id="labelInput" name="label" type="text" placeholder="Who is this for?" />
-        <button type="submit">Add IP</button>
-      </form>
-    </section>
-  </main>
+				<section class="card span-12" data-section="logs">
+					<div class="card-header">
+						<h2>System Events</h2>
+						<span class="card-status" aria-hidden="true"></span>
+					</div>
+					<div class="table-wrapper">
+						<div class="log-scroll" id="logContainer"></div>
+					</div>
+				</section>
+			</div>
+		</main>
+	</div>
 
-  <script>
-    const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
-    const LOGS_ENDPOINT = "/api/admin/logs?limit=50";
-    const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
-    const KICK_ENDPOINT = "/api/admin/kick";
+	<script>
+		const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
+		const LOGS_ENDPOINT = "/api/admin/logs?limit=50";
+		const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
+		const KICK_ENDPOINT = "/api/admin/kick";
+		const REFRESH_INTERVAL = 5000;
 
-    let ownerIp = "";
+		let ownerIp = "";
+		let refreshTimer = null;
 
-    function setMessage(message, isError = false) {
-      const box = document.getElementById("messageBox");
-      box.textContent = message || "";
-      box.classList.toggle("error", Boolean(isError));
-    }
+		function setMessage(message, isError = false) {
+			const box = document.getElementById("messageBox");
+			box.textContent = message || "";
+			box.classList.toggle("error", Boolean(isError));
+		}
 
-    function formatDate(isoString) {
-      if (!isoString) {
-        return "—";
-      }
-      try {
-        const date = new Date(isoString);
-        if (Number.isNaN(date.getTime())) {
-          return isoString;
-        }
-        return date.toLocaleString();
-      } catch (error) {
-        return isoString;
-      }
-    }
+		function formatDate(value) {
+			if (!value) {
+				return "—";
+			}
+			try {
+				const date = new Date(value);
+				if (Number.isNaN(date.getTime())) {
+					return value;
+				}
+				return date.toLocaleString();
+			} catch (_error) {
+				return value;
+			}
+		}
 
-    function formatLastSeen(lastSeenMsAgo) {
-      if (typeof lastSeenMsAgo !== "number" || Number.isNaN(lastSeenMsAgo)) {
-        return "—";
-      }
-      if (lastSeenMsAgo < 0) {
-        return "—";
-      }
-      const totalSeconds = Math.floor(lastSeenMsAgo / 1000);
-      const seconds = totalSeconds % 60;
-      const minutes = Math.floor(totalSeconds / 60);
-      if (minutes > 0) {
-        return `${minutes}m ${seconds.toString().padStart(2, "0")}s ago`;
-      }
-      return `${seconds}s ago`;
-    }
+		function formatLastSeen(lastSeenMsAgo) {
+			if (typeof lastSeenMsAgo !== "number" || Number.isNaN(lastSeenMsAgo) || lastSeenMsAgo < 0) {
+				return "—";
+			}
+			const seconds = Math.floor(lastSeenMsAgo / 1000);
+			const mins = Math.floor(seconds / 60);
+			const remaining = seconds % 60;
+			if (mins > 0) {
+				return `${mins}m ${remaining.toString().padStart(2, "0")}s ago`;
+			}
+			return `${remaining}s ago`;
+		}
 
-    function renderNav(links) {
-      const nav = document.getElementById("navLinks");
-      nav.innerHTML = "";
-      (links || []).forEach((link) => {
-        if (!link?.href || !link?.label) {
-          return;
-        }
-        const anchor = document.createElement("a");
-        anchor.href = link.href;
-        anchor.textContent = link.label;
-        anchor.target = "_blank";
-        anchor.rel = "noreferrer";
-        nav.appendChild(anchor);
-      });
-    }
+		function renderNav(links) {
+			const nav = document.getElementById("navLinks");
+			nav.innerHTML = "";
+			(links || []).forEach((link) => {
+				if (!link || !link.href || !link.label) {
+					return;
+				}
+				const anchor = document.createElement("a");
+				anchor.href = link.href;
+				anchor.textContent = link.label;
+				anchor.target = "_blank";
+				anchor.rel = "noreferrer";
+				nav.appendChild(anchor);
+			});
+		}
 
-    function renderStatus(data) {
-      document.getElementById("focusName").textContent = data.currentFocus || "—";
-      document.getElementById("ctTeamName").textContent = data.teamNames?.CT || "—";
-      document.getElementById("tTeamName").textContent = data.teamNames?.T || "—";
-      document.getElementById("cameraCount").textContent = Array.isArray(data.publishers) ? data.publishers.length.toString() : "0";
-      document.getElementById("updatedAt").textContent = formatDate(data.updatedAt);
-    }
+		function updateCardIndicator(section, isActive) {
+			const indicator = document.querySelector(`.card[data-section="${section}"] .card-status`);
+			if (indicator) {
+				indicator.classList.toggle("active", Boolean(isActive));
+			}
+		}
 
-    function renderTurnInfo(turnInfo) {
-      const tbody = document.getElementById("turnTableBody");
-      tbody.innerHTML = "";
-      if (!turnInfo) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 3;
-        cell.textContent = "TURN configuration unavailable.";
-        cell.style.color = "var(--muted)";
-        row.appendChild(cell);
-        tbody.appendChild(row);
-        return;
-      }
+		function flashCards() {
+			const cards = document.querySelectorAll(".card");
+			cards.forEach((card) => {
+				card.classList.remove("flash");
+				void card.offsetWidth;
+				card.classList.add("flash");
+			});
+		}
 
-      const row = document.createElement("tr");
+		function renderStatus(data) {
+			document.getElementById("focusName").textContent = data.currentFocus || "—";
+			document.getElementById("ctTeamName").textContent = data.teamNames?.CT || "—";
+			document.getElementById("tTeamName").textContent = data.teamNames?.T || "—";
+			const publishersCount = Array.isArray(data.publishers) ? data.publishers.length : 0;
+			document.getElementById("cameraCount").textContent = publishersCount.toString();
+			document.getElementById("updatedAt").textContent = formatDate(data.updatedAt);
+			updateCardIndicator("live-status", Boolean(data.currentFocus) || publishersCount > 0);
+		}
 
-      const usernameCell = document.createElement("td");
-      usernameCell.textContent = turnInfo.username || "—";
-      row.appendChild(usernameCell);
+		function renderTurnInfo(turnInfo) {
+			const tbody = document.getElementById("turnTableBody");
+			tbody.innerHTML = "";
 
-      const tlsCell = document.createElement("td");
-      tlsCell.textContent = turnInfo.hasTLS ? "YES" : "NO";
-      tlsCell.style.color = turnInfo.hasTLS ? "var(--success)" : "var(--muted)";
-      row.appendChild(tlsCell);
+			if (!turnInfo) {
+				const row = document.createElement("tr");
+				const cell = document.createElement("td");
+				cell.colSpan = 3;
+				cell.textContent = "TURN configuration unavailable.";
+				cell.style.color = "var(--text-secondary)";
+				row.appendChild(cell);
+				tbody.appendChild(row);
+				updateCardIndicator("turn-status", false);
+				return;
+			}
 
-      const urlsCell = document.createElement("td");
-      if (Array.isArray(turnInfo.urls) && turnInfo.urls.length) {
-        turnInfo.urls.forEach((url) => {
-          const tag = document.createElement("span");
-          tag.className = "tag";
-          tag.textContent = url;
-          urlsCell.appendChild(tag);
-        });
-      } else {
-        urlsCell.textContent = "—";
-      }
-      row.appendChild(urlsCell);
+			const row = document.createElement("tr");
 
-      tbody.appendChild(row);
-    }
+			const usernameCell = document.createElement("td");
+			usernameCell.textContent = turnInfo.username || "—";
+			row.appendChild(usernameCell);
 
-    function renderCameras(publishers) {
-      const tbody = document.getElementById("cameraTableBody");
-      tbody.innerHTML = "";
+			const tlsCell = document.createElement("td");
+			const tlsValue = document.createElement("span");
+			tlsValue.textContent = turnInfo.hasTLS ? "YES" : "NO";
+			tlsValue.className = turnInfo.hasTLS ? "yes" : "no";
+			tlsCell.appendChild(tlsValue);
+			row.appendChild(tlsCell);
 
-      if (!Array.isArray(publishers) || !publishers.length) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 6;
-        cell.textContent = "No active cameras";
-        cell.style.color = "var(--muted)";
-        row.appendChild(cell);
-        tbody.appendChild(row);
-        return;
-      }
+			const urlsCell = document.createElement("td");
+			if (Array.isArray(turnInfo.urls) && turnInfo.urls.length > 0) {
+				turnInfo.urls.forEach((url) => {
+					const tag = document.createElement("span");
+					tag.className = "tag";
+					tag.textContent = url;
+					urlsCell.appendChild(tag);
+				});
+			} else {
+				urlsCell.textContent = "—";
+			}
+			row.appendChild(urlsCell);
 
-      publishers.forEach((entry) => {
-        const row = document.createElement("tr");
-        const stale = typeof entry.lastSeenMsAgo === "number" && entry.lastSeenMsAgo > 10_000;
-        if (stale) {
-          row.classList.add("stale");
-        }
+			tbody.appendChild(row);
+			updateCardIndicator("turn-status", Boolean(turnInfo.urls?.length) && Boolean(turnInfo.hasTLS));
+		}
 
-        const nicknameCell = document.createElement("td");
-        nicknameCell.textContent = entry.nickname || "—";
-        row.appendChild(nicknameCell);
+		function renderCameras(publishers) {
+			const tbody = document.getElementById("cameraTableBody");
+			tbody.innerHTML = "";
 
-        const roleCell = document.createElement("td");
-        roleCell.textContent = entry.role || "—";
-        row.appendChild(roleCell);
+			if (!Array.isArray(publishers) || publishers.length === 0) {
+				const row = document.createElement("tr");
+				const cell = document.createElement("td");
+				cell.colSpan = 6;
+				cell.textContent = "No active cameras.";
+				cell.style.color = "var(--text-secondary)";
+				row.appendChild(cell);
+				tbody.appendChild(row);
+				updateCardIndicator("cameras", false);
+				return;
+			}
 
-        const lastSeenCell = document.createElement("td");
-        lastSeenCell.textContent = formatLastSeen(entry.lastSeenMsAgo);
-        row.appendChild(lastSeenCell);
+			publishers.forEach((entry) => {
+				const row = document.createElement("tr");
+				const stale = typeof entry.lastSeenMsAgo === "number" && entry.lastSeenMsAgo > 10000;
+				if (stale) {
+					row.classList.add("stale");
+				}
 
-        const uniqueViewersCell = document.createElement("td");
-        uniqueViewersCell.textContent = typeof entry.uniqueViewers === "number" ? entry.uniqueViewers.toString() : "0";
-        row.appendChild(uniqueViewersCell);
+				const nicknameCell = document.createElement("td");
+				nicknameCell.textContent = entry.nickname || "—";
+				nicknameCell.classList.add("accent-text");
+				row.appendChild(nicknameCell);
 
-        const connectionsCell = document.createElement("td");
-        const totalConnections = typeof entry.connectionCount === "number" ? entry.connectionCount : entry.viewerCount;
-        connectionsCell.textContent = typeof totalConnections === "number" ? totalConnections.toString() : "0";
-        row.appendChild(connectionsCell);
+				const roleCell = document.createElement("td");
+				roleCell.textContent = entry.role || "—";
+				row.appendChild(roleCell);
 
-        const actionCell = document.createElement("td");
-        const kickBtn = document.createElement("button");
-        kickBtn.className = "danger";
-        kickBtn.type = "button";
-        kickBtn.textContent = "Kick";
-        kickBtn.addEventListener("click", () => handleKick(entry.nickname));
-        actionCell.appendChild(kickBtn);
-        row.appendChild(actionCell);
+				const lastSeenCell = document.createElement("td");
+				lastSeenCell.textContent = formatLastSeen(entry.lastSeenMsAgo);
+				row.appendChild(lastSeenCell);
 
-        tbody.appendChild(row);
-      });
-    }
+				const uniqueViewersCell = document.createElement("td");
+				const viewers = typeof entry.uniqueViewers === "number" ? entry.uniqueViewers : 0;
+				uniqueViewersCell.textContent = viewers.toString();
+				uniqueViewersCell.style.color = "var(--accent)";
+				row.appendChild(uniqueViewersCell);
 
-    function renderLogs(events) {
-      const tbody = document.getElementById("logTableBody");
-      tbody.innerHTML = "";
+				const connectionsCell = document.createElement("td");
+				const totalConnections = typeof entry.connectionCount === "number" ? entry.connectionCount : entry.viewerCount;
+				const safeCount = typeof totalConnections === "number" ? totalConnections : 0;
+				connectionsCell.textContent = safeCount.toString();
+				row.appendChild(connectionsCell);
 
-      if (!Array.isArray(events) || !events.length) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 3;
-        cell.textContent = "No recent events";
-        cell.style.color = "var(--muted)";
-        row.appendChild(cell);
-        tbody.appendChild(row);
-        return;
-      }
+				const actionCell = document.createElement("td");
+				actionCell.style.textAlign = "right";
+				const kickBtn = document.createElement("button");
+				kickBtn.type = "button";
+				kickBtn.className = "btn danger";
+				kickBtn.textContent = "Kick";
+				kickBtn.addEventListener("click", () => handleKick(entry.nickname));
+				actionCell.appendChild(kickBtn);
+				row.appendChild(actionCell);
 
-      const sorted = [...events].sort((a, b) => {
-        const aTime = new Date(a.timestamp || 0).getTime();
-        const bTime = new Date(b.timestamp || 0).getTime();
-        return bTime - aTime;
-      });
+				tbody.appendChild(row);
+			});
+			updateCardIndicator("cameras", true);
+		}
 
-      sorted.forEach((event) => {
-        const row = document.createElement("tr");
+		function renderLogs(events) {
+			const container = document.getElementById("logContainer");
+			container.innerHTML = "";
 
-        const timeCell = document.createElement("td");
-        timeCell.textContent = formatDate(event.timestamp);
-        row.appendChild(timeCell);
+			if (!Array.isArray(events) || events.length === 0) {
+				const emptyRow = document.createElement("div");
+				emptyRow.className = "log-row";
+				const meta = document.createElement("div");
+				meta.className = "log-meta";
+				meta.textContent = "No recent events.";
+				emptyRow.appendChild(meta);
+				const details = document.createElement("pre");
+				details.className = "log-payload";
+				details.textContent = "{}";
+				emptyRow.appendChild(details);
+				container.appendChild(emptyRow);
+				updateCardIndicator("logs", false);
+				return;
+			}
 
-        const typeCell = document.createElement("td");
-        typeCell.textContent = event.type || "—";
-        row.appendChild(typeCell);
+			const sorted = [...events].sort((a, b) => {
+				const aTime = new Date(a.timestamp || 0).getTime();
+				const bTime = new Date(b.timestamp || 0).getTime();
+				return bTime - aTime;
+			});
 
-        const payloadCell = document.createElement("td");
-        const pre = document.createElement("pre");
-        pre.className = "log-payload";
-        pre.textContent = JSON.stringify(event, null, 2);
-        payloadCell.appendChild(pre);
-        row.appendChild(payloadCell);
+			sorted.forEach((event) => {
+				const row = document.createElement("div");
+				row.className = "log-row";
 
-        tbody.appendChild(row);
-      });
-    }
+				const meta = document.createElement("div");
+				meta.className = "log-meta";
+				const timeEl = document.createElement("time");
+				timeEl.dateTime = event.timestamp || "";
+				timeEl.textContent = formatDate(event.timestamp);
+				meta.appendChild(timeEl);
+				const typeEl = document.createElement("span");
+				typeEl.className = "type";
+				typeEl.textContent = event.type || "event";
+				meta.appendChild(typeEl);
+				row.appendChild(meta);
 
-    function renderAllowedIps(items) {
-      const tbody = document.getElementById("ipTableBody");
-      tbody.innerHTML = "";
+				const payload = document.createElement("pre");
+				payload.className = "log-payload";
+				payload.textContent = JSON.stringify(event, null, 2);
+				row.appendChild(payload);
 
-      if (!Array.isArray(items) || !items.length) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No IPs yet";
-        cell.style.color = "var(--muted)";
-        row.appendChild(cell);
-        tbody.appendChild(row);
-        return;
-      }
+				container.appendChild(row);
+			});
+			updateCardIndicator("logs", true);
+		}
 
-      items.forEach((entry) => {
-        const row = document.createElement("tr");
+		function renderAllowedIps(items) {
+			const tbody = document.getElementById("ipTableBody");
+			tbody.innerHTML = "";
 
-        const ipCell = document.createElement("td");
-        ipCell.textContent = entry.ip;
-        row.appendChild(ipCell);
+			if (!Array.isArray(items) || items.length === 0) {
+				const row = document.createElement("tr");
+				const cell = document.createElement("td");
+				cell.colSpan = 4;
+				cell.textContent = "No IPs yet.";
+				cell.style.color = "var(--text-secondary)";
+				row.appendChild(cell);
+				tbody.appendChild(row);
+				updateCardIndicator("allowed-ips", false);
+				return;
+			}
 
-        const labelCell = document.createElement("td");
-        labelCell.textContent = entry.label || "—";
-        row.appendChild(labelCell);
+			items.forEach((entry) => {
+				const row = document.createElement("tr");
 
-        const addedCell = document.createElement("td");
-        addedCell.textContent = formatDate(entry.addedAt);
-        row.appendChild(addedCell);
+				const ipCell = document.createElement("td");
+				ipCell.textContent = entry.ip;
+				if (entry.ip === ownerIp) {
+					ipCell.style.color = "var(--accent)";
+				}
+				row.appendChild(ipCell);
 
-        const actionCell = document.createElement("td");
-        if (entry.ip === ownerIp) {
-          const badge = document.createElement("span");
-          badge.className = "tag";
-          badge.textContent = "Primary";
-          actionCell.appendChild(badge);
-        } else {
-          const removeBtn = document.createElement("button");
-          removeBtn.className = "danger";
-          removeBtn.type = "button";
-          removeBtn.textContent = "Remove";
-          removeBtn.addEventListener("click", () => handleRemoveIp(entry.ip));
-          actionCell.appendChild(removeBtn);
-        }
-        row.appendChild(actionCell);
+				const labelCell = document.createElement("td");
+				labelCell.textContent = entry.label || "—";
+				row.appendChild(labelCell);
 
-        tbody.appendChild(row);
-      });
-    }
+				const addedCell = document.createElement("td");
+				addedCell.textContent = formatDate(entry.addedAt);
+				row.appendChild(addedCell);
 
-    async function fetchDashboard() {
-      const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || "Failed to load dashboard");
-      }
-      return response.json();
-    }
+				const actionCell = document.createElement("td");
+				actionCell.style.textAlign = "right";
+				if (entry.ip === ownerIp) {
+					const badge = document.createElement("span");
+					badge.className = "tag";
+					badge.textContent = "Primary";
+					actionCell.appendChild(badge);
+				} else {
+					const removeBtn = document.createElement("button");
+					removeBtn.type = "button";
+					removeBtn.className = "btn danger";
+					removeBtn.textContent = "Remove";
+					removeBtn.addEventListener("click", () => handleRemoveIp(entry.ip));
+					actionCell.appendChild(removeBtn);
+				}
+				row.appendChild(actionCell);
 
-    async function fetchLogs() {
-      const response = await fetch(LOGS_ENDPOINT, { cache: "no-store" });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || "Failed to load logs");
-      }
-      return response.json();
-    }
+				tbody.appendChild(row);
+			});
+			updateCardIndicator("allowed-ips", true);
+		}
 
-    async function refreshAll() {
-      try {
-        const [dashboard, logsPayload] = await Promise.all([fetchDashboard(), fetchLogs()]);
-        ownerIp = dashboard.ownerIp || "";
-        renderNav(dashboard.siteLinks);
-        renderStatus(dashboard);
-        renderTurnInfo(dashboard.turnInfo);
-        renderCameras(dashboard.publishers);
-        renderAllowedIps(dashboard.allowedIps);
-        renderLogs(logsPayload.events);
-        setMessage("");
-      } catch (error) {
-        setMessage(error.message || "Failed to refresh dashboard", true);
-      }
-    }
+		async function fetchDashboard() {
+			const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
+			if (!response.ok) {
+				const payload = await response.json().catch(() => ({}));
+				throw new Error(payload.error || "Failed to load dashboard");
+			}
+			return response.json();
+		}
 
-    async function handleRemoveIp(ip) {
-      if (!window.confirm(`Remove ${ip} from the allowlist?`)) {
-        return;
-      }
-      try {
-        const response = await fetch(`${ADD_IP_ENDPOINT}/${encodeURIComponent(ip)}`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Unable to remove IP");
-        }
-        setMessage(`Removed ${ip} from the allowlist.`);
-        await refreshAll();
-      } catch (error) {
-        setMessage(error.message || "Failed to remove IP", true);
-      }
-    }
+		async function fetchLogs() {
+			const response = await fetch(LOGS_ENDPOINT, { cache: "no-store" });
+			if (!response.ok) {
+				const payload = await response.json().catch(() => ({}));
+				throw new Error(payload.error || "Failed to load logs");
+			}
+			return response.json();
+		}
 
-    async function handleKick(nickname) {
-      if (!nickname) {
-        return;
-      }
-      if (!window.confirm(`Kick camera for ${nickname}?`)) {
-        return;
-      }
-      try {
-        const response = await fetch(KICK_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nickname }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Unable to kick camera");
-        }
-        setMessage(`Camera ${nickname} disconnected.`);
-        await refreshAll();
-      } catch (error) {
-        setMessage(error.message || "Failed to kick camera", true);
-      }
-    }
+		async function refreshAll() {
+			try {
+				const [dashboard, logsPayload] = await Promise.all([fetchDashboard(), fetchLogs()]);
+				ownerIp = dashboard.ownerIp || "";
 
-    document.getElementById("addIpForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const ip = event.target.ip.value.trim();
-      const label = event.target.label.value.trim();
-      if (!ip) {
-        setMessage("Enter an IPv4 address", true);
-        return;
-      }
+				renderNav(dashboard.siteLinks);
+				renderStatus(dashboard);
+				renderTurnInfo(dashboard.turnInfo);
+				renderCameras(dashboard.publishers);
+				renderAllowedIps(dashboard.allowedIps);
+				renderLogs(logsPayload.events);
 
-      try {
-        const response = await fetch(ADD_IP_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ip, label }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Unable to add IP");
-        }
-        event.target.reset();
-        setMessage(`Added ${ip} to the allowlist.`);
-        await refreshAll();
-      } catch (error) {
-        setMessage(error.message || "Failed to add IP", true);
-      }
-    });
+				setMessage("");
+				flashCards();
+			} catch (error) {
+				console.error(error);
+				setMessage(error.message || "Failed to refresh dashboard", true);
+			}
+		}
 
-    refreshAll();
-    setInterval(refreshAll, 5000);
-  </script>
+		async function handleRemoveIp(ip) {
+			if (!window.confirm(`Remove ${ip} from the allowlist?`)) {
+				return;
+			}
+			try {
+				const response = await fetch(`${ADD_IP_ENDPOINT}/${encodeURIComponent(ip)}`, {
+					method: "DELETE",
+					headers: { "Content-Type": "application/json" }
+				});
+				if (!response.ok) {
+					const payload = await response.json().catch(() => ({}));
+					throw new Error(payload.error || "Unable to remove IP");
+				}
+				setMessage(`Removed ${ip} from the allowlist.`);
+				await refreshAll();
+			} catch (error) {
+				console.error(error);
+				setMessage(error.message || "Failed to remove IP", true);
+			}
+		}
+
+		async function handleKick(nickname) {
+			if (!nickname || !window.confirm(`Kick camera for ${nickname}?`)) {
+				return;
+			}
+			try {
+				const response = await fetch(KICK_ENDPOINT, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ nickname })
+				});
+				if (!response.ok) {
+					const payload = await response.json().catch(() => ({}));
+					throw new Error(payload.error || "Unable to kick camera");
+				}
+				setMessage(`Camera ${nickname} disconnected.`);
+				await refreshAll();
+			} catch (error) {
+				console.error(error);
+				setMessage(error.message || "Failed to kick camera", true);
+			}
+		}
+
+		document.getElementById("addIpForm").addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const ip = event.target.ip.value.trim();
+			const label = event.target.label.value.trim();
+
+			if (!ip) {
+				setMessage("Enter an IPv4 address", true);
+				return;
+			}
+
+			try {
+				const response = await fetch(ADD_IP_ENDPOINT, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ ip, label })
+				});
+				if (!response.ok) {
+					const payload = await response.json().catch(() => ({}));
+					throw new Error(payload.error || "Unable to add IP");
+				}
+				event.target.reset();
+				setMessage(`Added ${ip} to the allowlist.`);
+				await refreshAll();
+			} catch (error) {
+				console.error(error);
+				setMessage(error.message || "Failed to add IP", true);
+			}
+		});
+
+		async function safeRefresh() {
+			await refreshAll();
+		}
+
+		function init() {
+			safeRefresh();
+			refreshTimer = setInterval(safeRefresh, REFRESH_INTERVAL);
+			document.addEventListener("visibilitychange", () => {
+				if (document.hidden) {
+					clearInterval(refreshTimer);
+					refreshTimer = null;
+				} else if (!refreshTimer) {
+					safeRefresh();
+					refreshTimer = setInterval(safeRefresh, REFRESH_INTERVAL);
+				}
+			});
+		}
+
+		init();
+	</script>
 </body>
 </html>
