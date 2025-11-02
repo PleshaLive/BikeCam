@@ -3,15 +3,21 @@ import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import bodyParser from "body-parser";
 import cors from "cors";
+import compression from "compression";
+import helmet from "helmet";
+import dotenv from "dotenv";
+import basicAuth from "express-basic-auth";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
 import { fileURLToPath } from "url";
 
+dotenv.config();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const OWNER_IP = "212.90.60.103";
+const OWNER_IP = process.env.OWNER_IP || "127.0.0.1";
 const ADMIN_DATA_DIR = path.join(__dirname, "data");
 const ADMIN_CONFIG_PATH = path.join(ADMIN_DATA_DIR, "admin-config.json");
 const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)(\.(25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
@@ -183,8 +189,37 @@ function collectPublisherStats() {
 
 const app = express();
 app.set("trust proxy", true);
-app.use(cors());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS: " + origin));
+    },
+  })
+);
+app.use(compression());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+);
 app.use(bodyParser.json({ limit: "5mb" }));
+
+app.use(
+  ["/admin.html", "/admin", "/admin-panel", "/api/admin"],
+  basicAuth({
+    users: { [adminUser]: adminPass },
+    challenge: true,
+  })
+);
+
 app.use(express.static(path.join(__dirname, "public")));
 
 const server = http.createServer(app);
@@ -203,6 +238,15 @@ const SITE_LINKS = [
   { label: "T Cameras", href: "/t-side-gb-27.html" },
   { label: "Register Camera", href: "/register.html" },
 ];
+
+const allowedOrigins = [
+  "https://bikecam.onrender.com",
+  "https://raptors.life",
+  "http://localhost:3000",
+];
+
+const adminUser = process.env.ADMIN_USER || "admin";
+const adminPass = process.env.ADMIN_PASS || "changeme";
 
 const ICE_SERVER_CONFIG = loadIceServerConfig();
 const MJPEG_BOUNDARY = "frame";
@@ -964,6 +1008,11 @@ function handlePublisherPeerClosed(meta, payload) {
 }
 
 wss.on("connection", (socket) => {
+  socket.isAlive = true;
+  socket.on("pong", () => {
+    socket.isAlive = true;
+  });
+
   clients.add(socket);
 
   const socketId = `ws-${nextSocketId++}`;
@@ -1053,6 +1102,63 @@ wss.on("connection", (socket) => {
   socket.on("error", (error) => {
     console.error("WebSocket error:", error);
   });
+});
+
+const heartbeatInterval = setInterval(() => {
+  let performedCleanup = false;
+
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      try {
+        const meta = socketMeta.get(ws);
+
+        if (meta) {
+          if (meta.role === "publisher" && meta.nickname) {
+            detachPublisher(meta.nickname, ws);
+            performedCleanup = true;
+          } else if (meta.role === "viewer" && meta.subscriptions instanceof Map) {
+            for (const [connectionId, nickname] of meta.subscriptions.entries()) {
+              stopViewerSubscription(meta, nickname, connectionId, true);
+              performedCleanup = true;
+            }
+          }
+
+          if (meta.id) {
+            socketById.delete(meta.id);
+          }
+        }
+
+        socketMeta.delete(ws);
+        clients.delete(ws);
+      } catch (error) {
+        // ignore cleanup issues during heartbeat pruning
+      }
+
+      try {
+        ws.terminate();
+      } catch (error) {
+        // ignore termination errors
+      }
+      return;
+    }
+
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch (error) {
+      // ignore ping errors
+    }
+  });
+
+  if (performedCleanup) {
+    broadcastPublisherList();
+  }
+}, 30_000);
+
+heartbeatInterval.unref?.();
+
+wss.on("close", () => {
+  clearInterval(heartbeatInterval);
 });
 
 server.on("error", (error) => {

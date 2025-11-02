@@ -102,6 +102,7 @@
 		const hasWebRTC = forceFallback ? false : window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
 		const retryCounts = new Map();
 		const fallbackNicknames = new Set();
+		const fallbackTimers = new Map();
 	const MAX_PLAYERS = 5;
 	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
@@ -173,7 +174,54 @@
 			return;
 		}
 		fallbackNicknames.add(nickname);
-		showSlotFallback(nickname);
+		scheduleFallback(nickname);
+	}
+
+	function scheduleFallback(nickname) {
+		if (!fallbackSettings.mjpeg || !nickname) {
+			return;
+		}
+
+		const slot = slots.get(nickname);
+		if (!slot?.fallbackImg) {
+			return;
+		}
+
+		if (
+			slot.fallbackImg.style.display === "block" &&
+			slot.fallbackImg.dataset.nickname === nickname
+		) {
+			return;
+		}
+
+		const existingTimer = fallbackTimers.get(nickname);
+		if (existingTimer) {
+			clearTimeout(existingTimer);
+		}
+
+		const timerId = setTimeout(() => {
+			fallbackTimers.delete(nickname);
+			if (!fallbackNicknames.has(nickname)) {
+				return;
+			}
+			showSlotFallback(nickname);
+		}, 2500);
+
+		fallbackTimers.set(nickname, timerId);
+	}
+
+	function cancelFallback(nickname) {
+		if (!nickname) {
+			return;
+		}
+
+		const timerId = fallbackTimers.get(nickname);
+		if (timerId) {
+			clearTimeout(timerId);
+			fallbackTimers.delete(nickname);
+		}
+
+		deactivateFallback(nickname);
 	}
 
 	function deactivateFallback(nickname) {
@@ -181,6 +229,11 @@
 			return;
 		}
 		fallbackNicknames.delete(nickname);
+		const timerId = fallbackTimers.get(nickname);
+		if (timerId) {
+			clearTimeout(timerId);
+			fallbackTimers.delete(nickname);
+		}
 		hideSlotFallback(nickname);
 	}
 
@@ -335,7 +388,7 @@
 		}
 
 		if (stream) {
-			hideSlotFallback(nickname);
+			cancelFallback(nickname);
 			slot.card.classList.remove("no-feed");
 			slot.placeholder.style.display = "none";
 			slot.video.style.display = "block";
@@ -347,7 +400,7 @@
 			slot.video.style.display = "none";
 			slot.video.srcObject = null;
 			if (fallbackNicknames.has(nickname)) {
-				showSlotFallback(nickname);
+				scheduleFallback(nickname);
 			} else {
 				hideSlotFallback(nickname);
 				slot.card.classList.add("no-feed");
@@ -392,7 +445,7 @@
 
 		if (!retainFallback) {
 			retryCounts.delete(nickname);
-			deactivateFallback(nickname);
+			cancelFallback(nickname);
 		} else {
 			fallbackNicknames.add(nickname);
 		}
@@ -420,7 +473,7 @@
 		if (!knownPublishers.has(nickname) || !currentPlayers.includes(nickname)) {
 			cleanupSession(nickname, { notify: true, retainFallback: false });
 			retryCounts.delete(nickname);
-			deactivateFallback(nickname);
+			cancelFallback(nickname);
 			return;
 		}
 
@@ -438,7 +491,7 @@
 		} else {
 			attempts = 0;
 			retryCounts.set(nickname, 0);
-			deactivateFallback(nickname);
+			cancelFallback(nickname);
 		}
 
 		if (!viewerRegistered || !wsReady) {
@@ -521,7 +574,7 @@
 			}
 
 			retryCounts.set(nickname, 0);
-			deactivateFallback(nickname);
+			cancelFallback(nickname);
 
 			current.stream = stream;
 			setSlotStream(nickname, stream);
@@ -551,7 +604,7 @@
 					current.connectTimer = null;
 				}
 				retryCounts.set(nickname, 0);
-				deactivateFallback(nickname);
+				cancelFallback(nickname);
 				return;
 			}
 

@@ -118,6 +118,8 @@
       const sessions = new Map();
   const retryCounts = new Map();
   const fallbackNicknames = new Set();
+      let fallbackTimer = null;
+      let fallbackTimerNickname = null;
 
       let desiredFocus = null;
   let displayedStream = null;
@@ -236,13 +238,44 @@
         }
       }
 
+      function scheduleFallback(nickname) {
+        if (!fallbackSettings.mjpeg || !nickname) {
+          return;
+        }
+
+        if (fallbackLayer.dataset.nickname === nickname && fallbackLayer.style.display === "block") {
+          return;
+        }
+
+        if (fallbackTimer && fallbackTimerNickname === nickname) {
+          return;
+        }
+
+        clearTimeout(fallbackTimer);
+        fallbackTimerNickname = nickname;
+        fallbackTimer = setTimeout(() => {
+          fallbackTimer = null;
+          fallbackTimerNickname = null;
+          showFallback(nickname);
+        }, 2500);
+      }
+
+      function cancelFallback(nickname) {
+        if (fallbackTimer && (!nickname || fallbackTimerNickname === nickname)) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+          fallbackTimerNickname = null;
+        }
+        deactivateFallback(nickname);
+      }
+
       function activateFallback(nickname) {
         if (!fallbackSettings.mjpeg || !nickname) {
           return;
         }
         fallbackNicknames.add(nickname);
         if (desiredFocus === nickname) {
-          showFallback(nickname);
+          scheduleFallback(nickname);
         }
       }
 
@@ -253,6 +286,11 @@
         fallbackNicknames.delete(nickname);
         if (fallbackLayer.dataset.nickname === nickname) {
           hideFallback(nickname);
+        }
+        if (fallbackTimer && fallbackTimerNickname === nickname) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+          fallbackTimerNickname = null;
         }
       }
 
@@ -347,7 +385,7 @@
         const session = sessions.get(desiredFocus);
 
         if (session?.stream) {
-          deactivateFallback(desiredFocus);
+          cancelFallback(desiredFocus);
           if (displayedStream !== session.stream) {
             setDisplay(session.stream, session.nickname);
           }
@@ -355,7 +393,10 @@
         }
 
         if (fallbackNicknames.has(desiredFocus)) {
-          showFallback(desiredFocus);
+          if (fallbackLayer.dataset.nickname === desiredFocus && fallbackLayer.style.display === "block") {
+            return;
+          }
+          scheduleFallback(desiredFocus);
           return;
         }
 
@@ -411,7 +452,7 @@
 
         if (!retainFallback) {
           retryCounts.delete(nickname);
-          deactivateFallback(nickname);
+          cancelFallback(nickname);
         } else {
           fallbackNicknames.add(nickname);
         }
@@ -435,7 +476,7 @@
         if (!knownPublishers.has(nickname)) {
           cleanupSession(nickname, { notify: true, retainFallback: false });
           retryCounts.delete(nickname);
-          deactivateFallback(nickname);
+          cancelFallback(nickname);
           return;
         }
 
@@ -453,7 +494,7 @@
         } else {
           attempts = 0;
           retryCounts.set(nickname, 0);
-          deactivateFallback(nickname);
+          cancelFallback(nickname);
         }
 
         if (!viewerRegistered || !wsReady) {
@@ -527,7 +568,7 @@
           }
 
           retryCounts.set(nickname, 0);
-          deactivateFallback(nickname);
+          cancelFallback(nickname);
 
           current.stream = stream;
           if (desiredFocus === nickname) {
@@ -559,7 +600,7 @@
               current.connectTimer = null;
             }
             retryCounts.set(nickname, 0);
-            deactivateFallback(nickname);
+            cancelFallback(nickname);
             return;
           }
 
@@ -686,6 +727,12 @@
         const normalized = normalizeNickname(name);
         if (normalized === desiredFocus) {
           return;
+        }
+
+        if (fallbackTimer && fallbackTimerNickname && fallbackTimerNickname !== normalized) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+          fallbackTimerNickname = null;
         }
 
         desiredFocus = normalized;
