@@ -21,6 +21,127 @@ const OWNER_IP = process.env.OWNER_IP || "127.0.0.1";
 const ADMIN_DATA_DIR = path.join(__dirname, "data");
 const ADMIN_CONFIG_PATH = path.join(ADMIN_DATA_DIR, "admin-config.json");
 const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)(\.(25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
+const STEAM_UNIVERSE_SHIFT = 56n;
+const STEAM_TYPE_SHIFT = 52n;
+const STEAM_INSTANCE_SHIFT = 32n;
+const STEAM_TYPE_INDIVIDUAL = 1n;
+const STEAM_INSTANCE_DESKTOP = 1n;
+
+function buildSteam64(universe, type, instance, accountId) {
+  return ((universe << STEAM_UNIVERSE_SHIFT) | (type << STEAM_TYPE_SHIFT) | (instance << STEAM_INSTANCE_SHIFT) | accountId).toString();
+}
+
+function steamLegacyTo64(value) {
+  const match = /^STEAM_([0-5]):([0-1]):(\d+)$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const universe = BigInt(Number(match[1]));
+  const yBit = BigInt(Number(match[2]));
+  const legacyId = BigInt(match[3]);
+  const accountId = legacyId * 2n + yBit;
+  return buildSteam64(universe, STEAM_TYPE_INDIVIDUAL, STEAM_INSTANCE_DESKTOP, accountId);
+}
+
+function steam3To64(value) {
+  const match = /^\[([A-Z]):([0-5]):(\d+)(?::(\d+))?]$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const typeChar = match[1];
+  if (typeChar !== "U") {
+    return null;
+  }
+
+  const universe = BigInt(Number(match[2]));
+  const accountId = BigInt(match[3]);
+  const instance = match[4] ? BigInt(Number(match[4])) : STEAM_INSTANCE_DESKTOP;
+  return buildSteam64(universe, STEAM_TYPE_INDIVIDUAL, instance, accountId);
+}
+
+function normalizeSteamId(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^\d{5,}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const legacy = steamLegacyTo64(trimmed);
+  if (legacy) {
+    return legacy;
+  }
+
+  const steam3 = steam3To64(trimmed);
+  if (steam3) {
+    return steam3;
+  }
+
+  return null;
+}
+
+function parseSpectatorTarget(raw) {
+  const result = {
+    steamId: null,
+    name: null,
+    nameLower: null,
+    slot: null,
+  };
+
+  if (raw === null || raw === undefined) {
+    return result;
+  }
+
+  if (typeof raw === "number") {
+    if (Number.isFinite(raw) && raw > 0) {
+      if (raw > 999999) {
+        result.steamId = Number.isSafeInteger(raw) ? String(raw) : String(Math.trunc(raw));
+      } else {
+        result.slot = Math.trunc(raw);
+      }
+    }
+    return result;
+  }
+
+  if (typeof raw !== "string") {
+    return result;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return result;
+  }
+
+  const normalizedSteam = normalizeSteamId(trimmed);
+  if (normalizedSteam) {
+    result.steamId = normalizedSteam;
+    return result;
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      if (numeric > 999999) {
+        result.steamId = trimmed;
+      } else {
+        result.slot = numeric;
+      }
+    }
+    return result;
+  }
+
+  result.name = trimmed;
+  result.nameLower = trimmed.toLowerCase();
+  return result;
+}
 
 let adminConfig = { allowedIps: [] };
 
@@ -563,43 +684,68 @@ app.post("/api/gsi", (req, res) => {
       data.player.spectarget ?? data.player?.state?.spectarget ?? null;
 
     const playerSteamId = String(data.player.steamid ?? "");
-    const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
-
-    let spectarget = null;
-    if (typeof spectargetRaw === "string" && spectargetRaw.trim()) {
-      spectarget = spectargetRaw.trim();
-    }
+    const targetMeta = parseSpectatorTarget(spectargetRaw);
+    const playerEntries = Object.values(gsiState.players);
 
     let focusName = null;
 
-    if (hasValidSlot) {
-      if (spectarget && spectarget !== playerSteamId) {
-        const directTarget = gsiState.players[spectarget];
-        if (directTarget?.name && directTarget.name.trim()) {
-          focusName = directTarget.name.trim();
+    if (targetMeta.steamId && targetMeta.steamId !== playerSteamId) {
+      const directTarget = gsiState.players[targetMeta.steamId];
+      if (directTarget?.name && directTarget.name.trim()) {
+        focusName = directTarget.name.trim();
+      }
+    }
+
+    if (!focusName && targetMeta.nameLower) {
+      for (const info of playerEntries) {
+        if (!info || info.steamId === playerSteamId) {
+          continue;
+        }
+
+        const candidateName = typeof info.name === "string" ? info.name.trim() : "";
+        if (!candidateName) {
+          continue;
+        }
+
+        if (candidateName.toLowerCase() === targetMeta.nameLower) {
+          focusName = candidateName;
+          break;
         }
       }
+    }
 
-      if (!focusName && spectarget && spectarget !== playerSteamId) {
-        // fallback: spectarget иногда приходит никнеймом
-        for (const info of Object.values(gsiState.players)) {
-          if (info?.name && info.name.trim() === spectarget) {
-            focusName = info.name.trim();
-            break;
-          }
+    if (!focusName) {
+      const slotQueue = [];
+      const pushSlot = (value) => {
+        if (typeof value !== "number") {
+          return;
         }
-      }
+        if (!Number.isFinite(value) || value <= 0) {
+          return;
+        }
+        if (!slotQueue.includes(value)) {
+          slotQueue.push(value);
+        }
+      };
 
-      if (!focusName && Number.isFinite(observerSlot)) {
-        // fallback: ищем игрока с таким же observer_slot
-        for (const info of Object.values(gsiState.players)) {
-          if (!info || info.steamId === playerSteamId) {
-            continue;
+  pushSlot(targetMeta.slot);
+      pushSlot(observerSlot);
+
+      if (slotQueue.length) {
+        for (const desiredSlot of slotQueue) {
+          for (const info of playerEntries) {
+            if (!info || info.steamId === playerSteamId) {
+              continue;
+            }
+
+            const targetSlot = Number(info.observer_slot);
+            if (Number.isFinite(targetSlot) && targetSlot === desiredSlot && info.name && info.name.trim()) {
+              focusName = info.name.trim();
+              break;
+            }
           }
 
-          const targetSlot = Number(info.observer_slot);
-          if (Number.isFinite(targetSlot) && targetSlot === observerSlot && info.name && info.name.trim()) {
-            focusName = info.name.trim();
+          if (focusName) {
             break;
           }
         }
