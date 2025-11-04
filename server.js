@@ -262,6 +262,51 @@ let gsiState = {
   },
 };
 
+const playerDirectory = {
+  bySteamId: new Map(),
+  byNameLower: new Map(),
+  byObserverSlot: new Map(),
+};
+
+function rebuildPlayerDirectory(players) {
+  playerDirectory.bySteamId.clear();
+  playerDirectory.byNameLower.clear();
+  playerDirectory.byObserverSlot.clear();
+
+  if (!players || typeof players !== "object") {
+    return;
+  }
+
+  for (const info of Object.values(players)) {
+    if (!info) {
+      continue;
+    }
+
+    const steamId = typeof info.steamId === "string" && info.steamId.trim() ? info.steamId.trim() : null;
+    const name = typeof info.name === "string" ? info.name.trim() : "";
+    const nameLower = name ? name.toLowerCase() : "";
+    const observerSlotRaw = Number(info.observer_slot);
+    const observerSlot = Number.isFinite(observerSlotRaw) && observerSlotRaw > 0 ? observerSlotRaw : null;
+
+    if (steamId) {
+      playerDirectory.bySteamId.set(steamId, info);
+    }
+
+    if (nameLower) {
+      playerDirectory.byNameLower.set(nameLower, info);
+    }
+
+    if (observerSlot) {
+      let bucket = playerDirectory.byObserverSlot.get(observerSlot);
+      if (!bucket) {
+        bucket = [];
+        playerDirectory.byObserverSlot.set(observerSlot, bucket);
+      }
+      bucket.push(info);
+    }
+  }
+}
+
 function extractClientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length) {
