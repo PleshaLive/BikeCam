@@ -239,7 +239,7 @@
         <strong id="focusName">—</strong>
       </div>
       <div class="status-card">
-        <span>Active Cameras</span>
+        <span>Cameras (live/total)</span>
         <strong id="cameraCount">0</strong>
       </div>
       <div class="status-card">
@@ -274,13 +274,14 @@
     </section>
 
     <section>
-      <h2>Active Cameras</h2>
+      <h2>Players & Cameras</h2>
       <table>
         <thead>
           <tr>
-            <th>Nickname</th>
-            <th>Viewers</th>
-            <th>Connections</th>
+            <th>Player</th>
+            <th>Team</th>
+            <th>Slot</th>
+            <th>Status</th>
             <th></th>
           </tr>
         </thead>
@@ -385,45 +386,99 @@
       });
     }
 
-    function renderPublishers(items) {
+    function renderPlayers(roster, publisherStats) {
       cameraTableBody.innerHTML = "";
 
-      if (!items.length) {
+      const rosterArray = Array.isArray(roster) ? [...roster] : [];
+      const activeMap = new Map();
+
+      if (Array.isArray(publisherStats)) {
+        publisherStats.forEach((entry) => {
+          if (!entry || typeof entry.nickname !== "string") {
+            return;
+          }
+          const key = entry.nickname.trim().toLowerCase();
+          if (!key) {
+            return;
+          }
+          activeMap.set(key, entry);
+        });
+      }
+
+      const totalPlayers = rosterArray.length;
+      const activeCount = activeMap.size;
+      cameraCount.textContent = `${activeCount} / ${totalPlayers}`;
+
+      if (!totalPlayers) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No active cameras";
+        cell.colSpan = 5;
+        cell.textContent = "No players available";
         cell.style.color = "var(--muted)";
         row.appendChild(cell);
         cameraTableBody.appendChild(row);
-        cameraCount.textContent = "0";
         return;
       }
+      rosterArray.sort((a, b) => {
+        const teamA = (a?.team || "").toUpperCase();
+        const teamB = (b?.team || "").toUpperCase();
+        if (teamA !== teamB) {
+          return teamA.localeCompare(teamB);
+        }
 
-      cameraCount.textContent = items.length.toString();
+        const slotA = Number(a?.observer_slot);
+        const slotB = Number(b?.observer_slot);
+        const validA = Number.isFinite(slotA) ? slotA : 99;
+        const validB = Number.isFinite(slotB) ? slotB : 99;
+        if (validA !== validB) {
+          return validA - validB;
+        }
 
-      items.forEach((entry) => {
+        const nameA = typeof a?.name === "string" ? a.name : "";
+        const nameB = typeof b?.name === "string" ? b.name : "";
+        return nameA.localeCompare(nameB);
+      });
+
+      rosterArray.forEach((player) => {
         const row = document.createElement("tr");
 
+        const playerName = typeof player?.name === "string" && player.name.trim() ? player.name.trim() : "—";
+        const key = playerName.toLowerCase();
+        const activeEntry = key ? activeMap.get(key) : null;
+
         const nameCell = document.createElement("td");
-        nameCell.textContent = entry.nickname;
+        nameCell.textContent = playerName;
         row.appendChild(nameCell);
 
-        const viewersCell = document.createElement("td");
-        viewersCell.textContent = entry.uniqueViewers.toString();
-        row.appendChild(viewersCell);
+        const teamCell = document.createElement("td");
+        teamCell.textContent = (player?.team || "").toUpperCase() || "—";
+        row.appendChild(teamCell);
 
-        const connectionsCell = document.createElement("td");
-        connectionsCell.textContent = entry.connections.toString();
-        row.appendChild(connectionsCell);
+        const slotCell = document.createElement("td");
+        const slotValue = Number(player?.observer_slot);
+        slotCell.textContent = Number.isFinite(slotValue) && slotValue > 0 ? slotValue.toString() : "—";
+        row.appendChild(slotCell);
+
+        const statusCell = document.createElement("td");
+        if (activeEntry) {
+          const viewerCount = activeEntry.uniqueViewers ?? activeEntry.connections ?? 0;
+          statusCell.textContent = `Live (${viewerCount} viewers)`;
+          statusCell.style.color = "var(--success)";
+        } else {
+          statusCell.textContent = "Offline";
+          statusCell.style.color = "var(--muted)";
+        }
+        row.appendChild(statusCell);
 
         const actionCell = document.createElement("td");
-        const kickBtn = document.createElement("button");
-        kickBtn.className = "danger";
-        kickBtn.type = "button";
-        kickBtn.textContent = "Kick";
-        kickBtn.addEventListener("click", () => handleKick(entry.nickname));
-        actionCell.appendChild(kickBtn);
+        if (activeEntry) {
+          const kickBtn = document.createElement("button");
+          kickBtn.className = "danger";
+          kickBtn.type = "button";
+          kickBtn.textContent = "Kick";
+          kickBtn.addEventListener("click", () => handleKick(activeEntry.nickname));
+          actionCell.appendChild(kickBtn);
+        }
         row.appendChild(actionCell);
 
         cameraTableBody.appendChild(row);
@@ -484,9 +539,9 @@
         const focus = data.currentFocus || null;
         focusName.textContent = focus || "—";
         updatedAt.textContent = formatDate(data.updatedAt);
-        renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
-        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
-        renderPublishers(Array.isArray(data.publishers) ? data.publishers : []);
+  renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
+  renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
+  renderPlayers(Array.isArray(data.roster) ? data.roster : [], Array.isArray(data.publishers) ? data.publishers : []);
       } catch (error) {
         setMessage(error.message || "Dashboard connection failed", true);
       }
