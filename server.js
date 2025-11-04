@@ -753,13 +753,17 @@ app.post("/api/gsi", (req, res) => {
 
     let targetInfo = null;
 
-    if (targetMeta.steamId && targetMeta.steamId !== playerSteamIdNormalized) {
+    const playerInfo = playerSteamIdNormalized
+      ? playerDirectory.bySteamId.get(playerSteamIdNormalized) || null
+      : null;
+
+    if (targetMeta.steamId) {
       targetInfo = playerDirectory.bySteamId.get(targetMeta.steamId) || null;
     }
 
     if (!targetInfo && targetMeta.nameLower) {
       const candidate = playerDirectory.byNameLower.get(targetMeta.nameLower) || null;
-      if (candidate && (!playerSteamIdNormalized || candidate.steamId !== playerSteamIdNormalized)) {
+      if (candidate) {
         targetInfo = candidate;
       }
     }
@@ -789,9 +793,6 @@ app.post("/api/gsi", (req, res) => {
           if (!info) {
             continue;
           }
-          if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
-            continue;
-          }
           if (typeof info.name === "string" && info.name.trim()) {
             targetInfo = info;
             break;
@@ -804,12 +805,9 @@ app.post("/api/gsi", (req, res) => {
       }
     }
 
-    if (!targetInfo && targetMeta.steamId && targetMeta.steamId !== playerSteamIdNormalized) {
+    if (!targetInfo && targetMeta.steamId) {
       for (const info of Object.values(gsiState.players)) {
         if (!info || info.steamId !== targetMeta.steamId) {
-          continue;
-        }
-        if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
           continue;
         }
         if (typeof info.name === "string" && info.name.trim()) {
@@ -822,9 +820,6 @@ app.post("/api/gsi", (req, res) => {
     if (!targetInfo && targetMeta.nameLower) {
       for (const info of Object.values(gsiState.players)) {
         if (!info) {
-          continue;
-        }
-        if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
           continue;
         }
 
@@ -840,11 +835,17 @@ app.post("/api/gsi", (req, res) => {
       }
     }
 
+    if (!targetInfo && playerInfo) {
+      targetInfo = playerInfo;
+    }
+
     let focusName = null;
     if (targetInfo?.name && targetInfo.name.trim()) {
       focusName = targetInfo.name.trim();
     } else if (targetMeta.name) {
       focusName = targetMeta.name;
+    } else if (typeof data.player?.name === "string" && data.player.name.trim()) {
+      focusName = data.player.name.trim();
     }
 
     gsiState.currentFocus = focusName || null;
