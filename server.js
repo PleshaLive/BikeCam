@@ -555,28 +555,35 @@ app.post("/api/gsi", (req, res) => {
   }
 
   if (data.player && typeof data.player === "object") {
-    const observerSlot = data.player.observer_slot;
-    const spectarget = data.player.spectarget ?? data.player?.state?.spectarget;
-    const playerSteamId = data.player.steamid;
+  let observerSlot = Number(data.player.observer_slot);
+  if (!Number.isFinite(observerSlot)) observerSlot = null;
 
-    let focusName =
-      typeof data.player.name === "string" ? data.player.name.trim() : "";
-    if (!focusName && typeof spectarget === "string") {
-      const targetInfo = gsiState.players[spectarget];
-      if (targetInfo?.name) {
-        focusName = targetInfo.name.trim();
-      }
+  const spectarget =
+    data.player.spectarget ?? data.player?.state?.spectarget ?? null;
+
+  const playerSteamId = String(data.player.steamid ?? "");
+
+  // валидный слот наблюдателя (не free-cam/0)
+  const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
+
+  // наблюдаем сами себя? (в момент переключения такое бывает)
+  const spectatingSelf =
+    typeof spectarget === "string" && spectarget === playerSteamId;
+
+  // фокус только по цели наблюдения (не по имени обсервера)
+  let focusName = null;
+  if (hasValidSlot && !spectatingSelf && typeof spectarget === "string") {
+    const targetInfo = gsiState.players[spectarget];
+    if (targetInfo && typeof targetInfo.name === "string" && targetInfo.name.trim()) {
+      focusName = targetInfo.name.trim();
     }
-
-    const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
-    const spectatingSelf =
-      typeof spectarget === "string" && spectarget === playerSteamId;
-    const hasFocusTarget = Boolean(focusName) && hasValidSlot && !spectatingSelf;
-
-    gsiState.currentFocus = hasFocusTarget ? focusName : null;
-  } else {
-    gsiState.currentFocus = null;
   }
+
+  gsiState.currentFocus = focusName || null;
+} else {
+  // если нет блока player в payload — сбрасываем фокус, чтобы Full_CAM не залипал
+  gsiState.currentFocus = null;
+}
 
   if (data.map && typeof data.map === "object") {
     const mapInfo = data.map;
