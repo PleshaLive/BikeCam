@@ -890,6 +890,10 @@ app.get("/current-focus", (req, res) => {
   res.json({ currentFocus: gsiState.currentFocus });
 });
 
+app.get("/api/current-focus", (req, res) => {
+  res.json({ currentFocus: gsiState.currentFocus });
+});
+
 app.get("/teams", (req, res) => {
   const teams = {};
 
