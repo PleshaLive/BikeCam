@@ -709,16 +709,29 @@ app.post("/api/gsi", (req, res) => {
         continue;
       }
 
-      updatedPlayers[steamId] = {
-        steamId,
-        name: player.name ?? "",
-        team: player.team ?? "",
-        health: player.state?.health ?? 0,
-        observer_slot: player.observer_slot ?? null,
+      const primarySteamId = normalizeSteamId(player.steamid ?? steamId) ?? normalizeSteamId(steamId) ?? String(steamId);
+      const name = typeof player.name === "string" ? player.name.trim() : "";
+      const observerSlotRaw = Number(player.observer_slot);
+      const observerSlot = Number.isFinite(observerSlotRaw) && observerSlotRaw > 0 ? observerSlotRaw : null;
+      const health = Number(player.state?.health ?? 0);
+
+      updatedPlayers[primarySteamId] = {
+        steamId: primarySteamId,
+        rawSteamId: typeof player.steamid === "string" ? player.steamid : String(steamId),
+        name,
+        team: typeof player.team === "string" ? player.team : "",
+        health: Number.isFinite(health) ? health : 0,
+        observer_slot: observerSlot,
+        observer_slot_raw: player.observer_slot ?? null,
       };
+
+      if (name) {
+        updatedPlayers[primarySteamId].nameLower = name.toLowerCase();
+      }
     }
 
     gsiState.players = updatedPlayers;
+    rebuildPlayerDirectory(gsiState.players);
   }
 
   if (data.player && typeof data.player === "object") {
@@ -728,22 +741,90 @@ app.post("/api/gsi", (req, res) => {
     const spectargetRaw =
       data.player.spectarget ?? data.player?.state?.spectarget ?? null;
 
-    const playerSteamId = String(data.player.steamid ?? "");
+    const playerSteamIdRaw =
+      typeof data.player.steamid === "string"
+        ? data.player.steamid.trim()
+        : typeof data.player.steamid === "number"
+        ? String(Math.trunc(data.player.steamid))
+        : "";
+
+    const playerSteamIdNormalized = normalizeSteamId(playerSteamIdRaw) ?? (playerSteamIdRaw || null);
     const targetMeta = parseSpectatorTarget(spectargetRaw);
-    const playerEntries = Object.values(gsiState.players);
 
-    let focusName = null;
+    let targetInfo = null;
 
-    if (targetMeta.steamId && targetMeta.steamId !== playerSteamId) {
-      const directTarget = gsiState.players[targetMeta.steamId];
-      if (directTarget?.name && directTarget.name.trim()) {
-        focusName = directTarget.name.trim();
+    if (targetMeta.steamId && targetMeta.steamId !== playerSteamIdNormalized) {
+      targetInfo = playerDirectory.bySteamId.get(targetMeta.steamId) || null;
+    }
+
+    if (!targetInfo && targetMeta.nameLower) {
+      const candidate = playerDirectory.byNameLower.get(targetMeta.nameLower) || null;
+      if (candidate && (!playerSteamIdNormalized || candidate.steamId !== playerSteamIdNormalized)) {
+        targetInfo = candidate;
       }
     }
 
-    if (!focusName && targetMeta.nameLower) {
-      for (const info of playerEntries) {
-        if (!info || info.steamId === playerSteamId) {
+    if (!targetInfo) {
+      const slotsToCheck = [];
+      const addSlot = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric <= 0) {
+          return;
+        }
+        if (!slotsToCheck.includes(numeric)) {
+          slotsToCheck.push(numeric);
+        }
+      };
+
+      addSlot(targetMeta.slot);
+      addSlot(observerSlot);
+
+      for (const desiredSlot of slotsToCheck) {
+        const bucket = playerDirectory.byObserverSlot.get(desiredSlot);
+        if (!bucket || !bucket.length) {
+          continue;
+        }
+
+        for (const info of bucket) {
+          if (!info) {
+            continue;
+          }
+          if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
+            continue;
+          }
+          if (typeof info.name === "string" && info.name.trim()) {
+            targetInfo = info;
+            break;
+          }
+        }
+
+        if (targetInfo) {
+          break;
+        }
+      }
+    }
+
+    if (!targetInfo && targetMeta.steamId && targetMeta.steamId !== playerSteamIdNormalized) {
+      for (const info of Object.values(gsiState.players)) {
+        if (!info || info.steamId !== targetMeta.steamId) {
+          continue;
+        }
+        if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
+          continue;
+        }
+        if (typeof info.name === "string" && info.name.trim()) {
+          targetInfo = info;
+        }
+        break;
+      }
+    }
+
+    if (!targetInfo && targetMeta.nameLower) {
+      for (const info of Object.values(gsiState.players)) {
+        if (!info) {
+          continue;
+        }
+        if (playerSteamIdNormalized && info.steamId === playerSteamIdNormalized) {
           continue;
         }
 
@@ -753,48 +834,17 @@ app.post("/api/gsi", (req, res) => {
         }
 
         if (candidateName.toLowerCase() === targetMeta.nameLower) {
-          focusName = candidateName;
+          targetInfo = info;
           break;
         }
       }
     }
 
-    if (!focusName) {
-      const slotQueue = [];
-      const pushSlot = (value) => {
-        if (typeof value !== "number") {
-          return;
-        }
-        if (!Number.isFinite(value) || value <= 0) {
-          return;
-        }
-        if (!slotQueue.includes(value)) {
-          slotQueue.push(value);
-        }
-      };
-
-  pushSlot(targetMeta.slot);
-      pushSlot(observerSlot);
-
-      if (slotQueue.length) {
-        for (const desiredSlot of slotQueue) {
-          for (const info of playerEntries) {
-            if (!info || info.steamId === playerSteamId) {
-              continue;
-            }
-
-            const targetSlot = Number(info.observer_slot);
-            if (Number.isFinite(targetSlot) && targetSlot === desiredSlot && info.name && info.name.trim()) {
-              focusName = info.name.trim();
-              break;
-            }
-          }
-
-          if (focusName) {
-            break;
-          }
-        }
-      }
+    let focusName = null;
+    if (targetInfo?.name && targetInfo.name.trim()) {
+      focusName = targetInfo.name.trim();
+    } else if (targetMeta.name) {
+      focusName = targetMeta.name;
     }
 
     gsiState.currentFocus = focusName || null;
