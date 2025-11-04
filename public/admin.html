@@ -291,11 +291,13 @@
   </main>
 
   <script>
-    const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
-    const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
-    const KICK_ENDPOINT = "/api/admin/kick";
+  const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
+  const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
+  const KICK_ENDPOINT = "/api/admin/kick";
+  const FALLBACK_ENDPOINT = "/api/admin/fallback";
 
     let ownerIp = "";
+  let forcedFallbackList = [];
 
     const messageBox = document.getElementById("messageBox");
     const focusName = document.getElementById("focusName");
@@ -391,6 +393,19 @@
 
       const rosterArray = Array.isArray(roster) ? [...roster] : [];
       const activeMap = new Map();
+      const forcedSet = new Set();
+
+      if (Array.isArray(forcedFallbackList)) {
+        forcedFallbackList.forEach((value) => {
+          if (typeof value !== "string") {
+            return;
+          }
+          const normalized = value.trim().toLowerCase();
+          if (normalized) {
+            forcedSet.add(normalized);
+          }
+        });
+      }
 
       if (Array.isArray(publisherStats)) {
         publisherStats.forEach((entry) => {
@@ -445,6 +460,7 @@
         const playerName = typeof player?.name === "string" && player.name.trim() ? player.name.trim() : "—";
         const key = playerName.toLowerCase();
         const activeEntry = key ? activeMap.get(key) : null;
+        const forced = key ? forcedSet.has(key) : false;
 
         const nameCell = document.createElement("td");
         nameCell.textContent = playerName;
@@ -460,7 +476,14 @@
         row.appendChild(slotCell);
 
         const statusCell = document.createElement("td");
-        if (activeEntry) {
+        if (forced && activeEntry) {
+          const viewerCount = activeEntry.uniqueViewers ?? activeEntry.connections ?? 0;
+          statusCell.textContent = `Live (MJPEG, ${viewerCount} viewers)`;
+          statusCell.style.color = "var(--success)";
+        } else if (forced) {
+          statusCell.textContent = "Forced MJPEG";
+          statusCell.style.color = "var(--muted)";
+        } else if (activeEntry) {
           const viewerCount = activeEntry.uniqueViewers ?? activeEntry.connections ?? 0;
           statusCell.textContent = `Live (${viewerCount} viewers)`;
           statusCell.style.color = "var(--success)";
@@ -471,6 +494,15 @@
         row.appendChild(statusCell);
 
         const actionCell = document.createElement("td");
+        if (playerName !== "—") {
+          const fallbackBtn = document.createElement("button");
+          fallbackBtn.className = "secondary";
+          fallbackBtn.type = "button";
+          fallbackBtn.textContent = forced ? "Use WebRTC" : "Force MJPEG";
+          fallbackBtn.addEventListener("click", () => handleForceFallback(playerName, !forced));
+          actionCell.appendChild(fallbackBtn);
+        }
+
         if (activeEntry) {
           const kickBtn = document.createElement("button");
           kickBtn.className = "danger";
@@ -526,6 +558,32 @@
       }
     }
 
+    async function handleForceFallback(nickname, enable) {
+      const trimmed = typeof nickname === "string" ? nickname.trim() : "";
+      if (!trimmed) {
+        return;
+      }
+
+      const mode = enable ? "mjpeg" : "auto";
+      try {
+        const response = await fetch(FALLBACK_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname: trimmed, mode }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to update fallback mode");
+        }
+        const payload = await response.json();
+        forcedFallbackList = Array.isArray(payload.forcedFallback) ? payload.forcedFallback : [];
+        setMessage(enable ? `Forced MJPEG for ${trimmed}.` : `Restored WebRTC for ${trimmed}.`);
+        await loadDashboard();
+      } catch (error) {
+        setMessage(error.message || "Failed to update fallback mode", true);
+      }
+    }
+
     async function loadDashboard() {
       try {
         const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
@@ -539,6 +597,7 @@
         const focus = data.currentFocus || null;
         focusName.textContent = focus || "—";
         updatedAt.textContent = formatDate(data.updatedAt);
+  forcedFallbackList = Array.isArray(data.forcedFallback) ? data.forcedFallback : [];
   renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
   renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
   renderPlayers(Array.isArray(data.roster) ? data.roster : [], Array.isArray(data.publishers) ? data.publishers : []);

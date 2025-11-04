@@ -103,6 +103,7 @@
 		const retryCounts = new Map();
 		const fallbackNicknames = new Set();
 		const fallbackTimers = new Map();
+		const forcedFallbackOverrides = new Set();
 	const MAX_PLAYERS = 5;
 	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
@@ -235,6 +236,67 @@
 			fallbackTimers.delete(nickname);
 		}
 		hideSlotFallback(nickname);
+	}
+
+	function applyForcedFallbackList(list) {
+		const updated = new Set();
+		if (Array.isArray(list)) {
+			for (const value of list) {
+				const normalized = normalizeNickname(value);
+				if (normalized) {
+					updated.add(normalized.toLowerCase());
+				}
+			}
+		}
+
+	let changed = false;
+	if (updated.size !== forcedFallbackOverrides.size) {
+		changed = true;
+	} else {
+		for (const name of forcedFallbackOverrides) {
+			if (!updated.has(name)) {
+				changed = true;
+				break;
+			}
+		}
+	}
+
+	if (!changed) {
+		return;
+	}
+
+	const affected = new Set();
+	for (const name of forcedFallbackOverrides) {
+		affected.add(name);
+	}
+	for (const name of updated) {
+		affected.add(name);
+	}
+
+	forcedFallbackOverrides.clear();
+	for (const name of updated) {
+		forcedFallbackOverrides.add(name);
+	}
+
+	for (const nickname of Array.from(sessions.keys())) {
+		const normalized = normalizeNickname(nickname);
+		if (!normalized) {
+			continue;
+		}
+		if (affected.has(normalized.toLowerCase())) {
+			restartSession(nickname, { failed: true });
+		}
+	}
+
+	syncSessions();
+	}
+
+	function hasForcedFallback(nickname) {
+		const normalized = normalizeNickname(nickname);
+		if (!normalized) {
+			return false;
+		}
+		return forcedFallbackOverrides.has(normalized.toLowerCase());
 	}
 
 	function createPlayerSlot(nickname) {
@@ -498,7 +560,7 @@
 			return;
 		}
 
-		if (!hasWebRTC) {
+		if (!hasWebRTC || hasForcedFallback(nickname)) {
 			activateFallback(nickname);
 			return;
 		}
@@ -528,7 +590,7 @@
 			return;
 		}
 
-		if (!hasWebRTC) {
+		if (!hasWebRTC || hasForcedFallback(nickname)) {
 			activateFallback(nickname);
 			return;
 		}
@@ -734,6 +796,7 @@
 		switch (payload.type) {
 			case "WELCOME":
 				handleActivePublishers(payload.publishers);
+				applyForcedFallbackList(payload.forcedFallback);
 				viewerRegistered = false;
 				sendSignal({ type: "HELLO", role: "viewer" });
 				break;
@@ -743,6 +806,9 @@
 				break;
 			case "ACTIVE_PUBLISHERS":
 				handleActivePublishers(payload.publishers);
+				break;
+			case "FORCED_FALLBACK":
+				applyForcedFallbackList(payload.nicknames);
 				break;
 			case "SIGNAL_PUBLISHER_ANSWER":
 				handlePublisherAnswer(payload);

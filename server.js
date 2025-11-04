@@ -268,6 +268,8 @@ const playerDirectory = {
   byObserverSlot: new Map(),
 };
 
+const forcedFallback = new Set();
+
 function rebuildPlayerDirectory(players) {
   playerDirectory.bySteamId.clear();
   playerDirectory.byNameLower.clear();
@@ -307,6 +309,17 @@ function rebuildPlayerDirectory(players) {
   }
 }
 
+function getForcedFallbackList() {
+  return Array.from(forcedFallback.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function broadcastForcedFallback() {
+  broadcast({
+    type: "FORCED_FALLBACK",
+    nicknames: getForcedFallbackList(),
+  });
+}
+
 function extractClientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length) {
@@ -336,6 +349,7 @@ function collectPublisherStats() {
   const stats = [];
 
   for (const [nickname, entry] of publishers.entries()) {
+    const normalized = normalizeNickname(nickname);
     let connectionCount = 0;
     const viewers = [];
 
@@ -351,6 +365,7 @@ function collectPublisherStats() {
       viewerCount: connectionCount,
       uniqueViewers: viewers.length,
       viewers,
+      forcedFallback: Boolean(normalized && forcedFallback.has(normalized)),
     });
   }
 
@@ -940,6 +955,7 @@ app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
     roster: Object.values(gsiState.players),
     siteLinks: SITE_LINKS,
     ownerIp: OWNER_IP,
+    forcedFallback: getForcedFallbackList(),
     updatedAt: new Date().toISOString(),
   });
 });
@@ -1028,6 +1044,27 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
 
   detachPublisher(nickname, entry.socket);
   res.json({ ok: true, nickname });
+});
+
+app.post("/api/admin/fallback", requireAdminAccess, (req, res) => {
+  const nickname = normalizeNickname(req.body?.nickname);
+  const mode = typeof req.body?.mode === "string" ? req.body.mode.trim().toLowerCase() : "";
+
+  if (!nickname) {
+    res.status(400).json({ error: "nickname is required" });
+    return;
+  }
+
+  const enable = mode === "mjpeg" || mode === "fallback" || mode === "force";
+
+  if (enable) {
+    forcedFallback.add(nickname);
+  } else {
+    forcedFallback.delete(nickname);
+  }
+
+  broadcastForcedFallback();
+  res.json({ ok: true, forcedFallback: getForcedFallbackList() });
 });
 
 app.get("/camera/:nickname", (_req, res) => {
@@ -1161,6 +1198,7 @@ function handleHello(socket, meta, payload) {
     meta.role = role;
     sendJson(socket, { type: "VIEWER_REGISTERED", role });
     sendJson(socket, { type: "ACTIVE_PUBLISHERS", publishers: getActivePublishers() });
+    sendJson(socket, { type: "FORCED_FALLBACK", nicknames: getForcedFallbackList() });
     return;
   }
 
@@ -1327,6 +1365,7 @@ wss.on("connection", (socket) => {
     socketId,
     currentFocus: gsiState.currentFocus,
     publishers: getActivePublishers(),
+    forcedFallback: getForcedFallbackList(),
   });
 
   socket.on("message", (rawMessage) => {
@@ -1423,7 +1462,7 @@ const heartbeatInterval = setInterval(() => {
         socketMeta.delete(ws);
         clients.delete(ws);
       } catch (error) {
-        // ignore cleanup issues during heartbeat pruning
+        // ignore cleanup issues during heartbeat pruning322
       }
 
       try {
