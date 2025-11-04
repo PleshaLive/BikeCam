@@ -544,6 +544,7 @@ app.post("/api/gsi", (req, res) => {
       }
 
       updatedPlayers[steamId] = {
+        steamId,
         name: player.name ?? "",
         team: player.team ?? "",
         health: player.state?.health ?? 0,
@@ -555,35 +556,61 @@ app.post("/api/gsi", (req, res) => {
   }
 
   if (data.player && typeof data.player === "object") {
-  let observerSlot = Number(data.player.observer_slot);
-  if (!Number.isFinite(observerSlot)) observerSlot = null;
+    let observerSlot = Number(data.player.observer_slot);
+    if (!Number.isFinite(observerSlot)) observerSlot = null;
 
-  const spectarget =
-    data.player.spectarget ?? data.player?.state?.spectarget ?? null;
+    const spectargetRaw =
+      data.player.spectarget ?? data.player?.state?.spectarget ?? null;
 
-  const playerSteamId = String(data.player.steamid ?? "");
+    const playerSteamId = String(data.player.steamid ?? "");
+    const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
 
-  // валидный слот наблюдателя (не free-cam/0)
-  const hasValidSlot = typeof observerSlot === "number" && observerSlot > 0;
-
-  // наблюдаем сами себя? (в момент переключения такое бывает)
-  const spectatingSelf =
-    typeof spectarget === "string" && spectarget === playerSteamId;
-
-  // фокус только по цели наблюдения (не по имени обсервера)
-  let focusName = null;
-  if (hasValidSlot && !spectatingSelf && typeof spectarget === "string") {
-    const targetInfo = gsiState.players[spectarget];
-    if (targetInfo && typeof targetInfo.name === "string" && targetInfo.name.trim()) {
-      focusName = targetInfo.name.trim();
+    let spectarget = null;
+    if (typeof spectargetRaw === "string" && spectargetRaw.trim()) {
+      spectarget = spectargetRaw.trim();
     }
-  }
 
-  gsiState.currentFocus = focusName || null;
-} else {
-  // если нет блока player в payload — сбрасываем фокус, чтобы Full_CAM не залипал
-  gsiState.currentFocus = null;
-}
+    let focusName = null;
+
+    if (hasValidSlot) {
+      if (spectarget && spectarget !== playerSteamId) {
+        const directTarget = gsiState.players[spectarget];
+        if (directTarget?.name && directTarget.name.trim()) {
+          focusName = directTarget.name.trim();
+        }
+      }
+
+      if (!focusName && spectarget && spectarget !== playerSteamId) {
+        // fallback: spectarget иногда приходит никнеймом
+        for (const info of Object.values(gsiState.players)) {
+          if (info?.name && info.name.trim() === spectarget) {
+            focusName = info.name.trim();
+            break;
+          }
+        }
+      }
+
+      if (!focusName && Number.isFinite(observerSlot)) {
+        // fallback: ищем игрока с таким же observer_slot
+        for (const info of Object.values(gsiState.players)) {
+          if (!info || info.steamId === playerSteamId) {
+            continue;
+          }
+
+          const targetSlot = Number(info.observer_slot);
+          if (Number.isFinite(targetSlot) && targetSlot === observerSlot && info.name && info.name.trim()) {
+            focusName = info.name.trim();
+            break;
+          }
+        }
+      }
+    }
+
+    gsiState.currentFocus = focusName || null;
+  } else {
+    // если нет блока player в payload — сбрасываем фокус, чтобы Full_CAM не залипал123
+    gsiState.currentFocus = null;
+  }
 
   if (data.map && typeof data.map === "object") {
     const mapInfo = data.map;
