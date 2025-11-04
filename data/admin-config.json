@@ -3,8 +3,20 @@
     {
       "ip": "194.62.137.177",
       "label": "RAGE_Pleshakov",
-      "addedAt": "1996",
-      "addedBy": "194.62.137.177"
+      "addedAt": "2025-11-04T00:00:00.000Z",
+      "addedBy": "system"
+    },
+    {
+      "ip": "109.87.97.219",
+      "label": "Comeblack",
+      "addedAt": "2025-11-04T00:00:00.000Z",
+      "addedBy": "system"
+    },
+    {
+      "ip": "94.178.173.47",
+      "label": "David",
+      "addedAt": "2025-11-04T00:00:00.000Z",
+      "addedBy": "system"
     }
   ]
 }

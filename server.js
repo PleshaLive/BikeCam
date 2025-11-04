@@ -407,13 +407,28 @@ app.use(
 );
 app.use(bodyParser.json({ limit: "5mb" }));
 
-app.use(
-  ["/admin.html", "/admin", "/admin-panel", "/api/admin", "/api/admin/*"],
-  basicAuth({
-    users: { [adminUser]: adminPass },
-    challenge: true,
-  })
-);
+const adminAuthMiddleware = basicAuth({
+  users: { [adminUser]: adminPass },
+  challenge: true,
+});
+
+const ADMIN_PATHS = [
+  "/admin.html",
+  "/admin",
+  "/admin-panel",
+  "/api/admin",
+  "/api/admin/*",
+];
+
+app.use(ADMIN_PATHS, (req, res, next) => {
+  const clientIp = extractClientIp(req);
+  if (isIpAllowed(clientIp)) {
+    req.adminClientIp = clientIp;
+    next();
+    return;
+  }
+  adminAuthMiddleware(req, res, next);
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 
