@@ -580,6 +580,15 @@ function normalizeNicknameKey(value) {
   return trimmed ? trimmed.toLowerCase() : "";
 }
 
+function normalizeNickname(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
 function sendJson(target, payload) {
   if (!target || target.readyState !== WebSocket.OPEN) {
     return;
