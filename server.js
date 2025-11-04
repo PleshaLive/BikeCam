@@ -222,6 +222,7 @@ function loadAdminConfig() {
     })
     .filter((entry) => entry.ip && isValidIp(entry.ip));
 
+  ensureQualityConfigShape(config);
   ensureOwnerIp(config);
   adminConfig = config;
 
@@ -268,7 +269,197 @@ const playerDirectory = {
   byObserverSlot: new Map(),
 };
 
-const forcedFallback = new Set();
+const forcedFallback = new Map();
+
+const serverLogs = [];
+const logStreamClients = new Set();
+let nextLogId = 1;
+const MAX_LOG_ENTRIES = 1000;
+const LOG_HEARTBEAT_MS = 15000;
+
+const QUALITY_PROFILES = {
+  LOW: {
+    maxBitrate: 400_000,
+    maxFramerate: 20,
+    scaleResolutionDownBy: 2,
+  },
+  MED: {
+    maxBitrate: 1_200_000,
+    maxFramerate: 30,
+    scaleResolutionDownBy: 1.25,
+  },
+  HIGH: {
+    maxBitrate: 2_400_000,
+    maxFramerate: 60,
+    scaleResolutionDownBy: 1,
+  },
+};
+
+const QUALITY_PROFILE_NAMES = new Set(["LOW", "MED", "HIGH", "CUSTOM"]);
+const QUALITY_PROFILE_ORDER = ["HIGH", "MED", "LOW"];
+const DEFAULT_CUSTOM_PROFILE = {
+  maxBitrate: 1_800_000,
+  maxFramerate: 30,
+  scaleResolutionDownBy: 1,
+};
+
+function logEvent(type, message, detail = null) {
+  const entry = {
+    id: nextLogId++,
+    timestamp: new Date().toISOString(),
+    type,
+    message,
+  };
+
+  if (detail && typeof detail === "object" && Object.keys(detail).length) {
+    entry.detail = detail;
+  }
+
+  serverLogs.push(entry);
+  if (serverLogs.length > MAX_LOG_ENTRIES) {
+    serverLogs.shift();
+  }
+
+  const payload = `event: log\ndata:${JSON.stringify(entry)}\n\n`;
+  for (const client of logStreamClients) {
+    try {
+      client.write(payload);
+    } catch (error) {
+      logStreamClients.delete(client);
+    }
+  }
+}
+
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function sanitizeQualityParams(input, fallback = DEFAULT_CUSTOM_PROFILE) {
+  const base = fallback || DEFAULT_CUSTOM_PROFILE;
+  const source = input && typeof input === "object" ? input : {};
+
+  const bitrate = clampNumber(source.maxBitrate, 100_000, 8_000_000, base.maxBitrate);
+  const framerate = clampNumber(source.maxFramerate, 10, 120, base.maxFramerate);
+  const scale = clampNumber(
+    source.scaleResolutionDownBy,
+    1,
+    4,
+    base.scaleResolutionDownBy
+  );
+
+  return {
+    maxBitrate: Math.round(bitrate),
+    maxFramerate: Math.round(framerate),
+    scaleResolutionDownBy: Number(scale.toFixed(2)),
+  };
+}
+
+function normalizeProfileName(value) {
+  const name = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return QUALITY_PROFILE_NAMES.has(name) ? name : null;
+}
+
+function ensureQualityConfigShape(config) {
+  if (!config.quality || typeof config.quality !== "object") {
+    config.quality = {};
+  }
+
+  const quality = config.quality;
+  const defaultProfile = normalizeProfileName(quality.defaultProfile) || "HIGH";
+  quality.defaultProfile = defaultProfile;
+  quality.defaultCustom = sanitizeQualityParams(quality.defaultCustom, DEFAULT_CUSTOM_PROFILE);
+
+  const overrides = {};
+  if (quality.cameraOverrides && typeof quality.cameraOverrides === "object") {
+    for (const [rawKey, rawValue] of Object.entries(quality.cameraOverrides)) {
+      const nickname = sanitizeNickname(rawValue?.nickname || rawKey);
+      const key = normalizeNicknameKey(nickname || rawKey);
+      if (!key) {
+        continue;
+      }
+
+      const profileName = normalizeProfileName(
+        (rawValue && typeof rawValue === "object" ? rawValue.profile : rawValue) || ""
+      );
+      if (!profileName) {
+        continue;
+      }
+
+      const entry = {
+        profile: profileName,
+        nickname: nickname || rawValue?.nickname || rawKey,
+      };
+
+      if (profileName === "CUSTOM") {
+        const customSource =
+          (rawValue && typeof rawValue === "object" && (rawValue.custom || rawValue.params || rawValue.settings)) ||
+          null;
+        entry.custom = sanitizeQualityParams(customSource, quality.defaultCustom);
+      }
+
+      overrides[key] = entry;
+    }
+  }
+
+  quality.cameraOverrides = overrides;
+  return quality;
+}
+
+function resolveQualityProfile(profileName, customOverride) {
+  const normalized = normalizeProfileName(profileName) || "HIGH";
+  if (normalized === "CUSTOM") {
+    return sanitizeQualityParams(
+      customOverride,
+      adminConfig.quality?.defaultCustom || DEFAULT_CUSTOM_PROFILE
+    );
+  }
+
+  const base = QUALITY_PROFILES[normalized] || QUALITY_PROFILES.HIGH;
+  return { ...base };
+}
+
+function getEffectiveQualityForKey(key) {
+  const quality = adminConfig.quality || {};
+  const overrides = quality.cameraOverrides || {};
+  const override = key ? overrides[key] : null;
+
+  const profileName = normalizeProfileName(override?.profile) || quality.defaultProfile || "HIGH";
+  const params = resolveQualityProfile(
+    profileName,
+    profileName === "CUSTOM" ? override?.custom : quality.defaultCustom
+  );
+
+  return {
+    profile: profileName,
+    params,
+    source: override ? "override" : "default",
+  };
+}
+
+function sendQualityProfileUpdate(entry) {
+  if (!entry || !entry.socket) {
+    return;
+  }
+
+  const effective = getEffectiveQualityForKey(entry.key);
+  sendJson(entry.socket, {
+    type: "QUALITY_PROFILE",
+    nickname: entry.nickname,
+    profile: effective.profile,
+    params: effective.params,
+  });
+}
+
+function notifyQualityProfileForKey(key) {
+  const entry = key ? publishers.get(key) : null;
+  if (entry) {
+    sendQualityProfileUpdate(entry);
+  }
+}
 
 function rebuildPlayerDirectory(players) {
   playerDirectory.bySteamId.clear();
@@ -348,8 +539,7 @@ function requireAdminAccess(req, res, next) {
 function collectPublisherStats() {
   const stats = [];
 
-  for (const [nickname, entry] of publishers.entries()) {
-    const normalized = normalizeNickname(nickname);
+  for (const entry of publishers.values()) {
     let connectionCount = 0;
     const viewers = [];
 
@@ -359,13 +549,16 @@ function collectPublisherStats() {
       viewers.push({ viewerSocketId, connections: size });
     }
 
+    const effectiveQuality = getEffectiveQualityForKey(entry.key);
+
     stats.push({
-      nickname,
+      nickname: entry.nickname,
       connections: connectionCount,
       viewerCount: connectionCount,
       uniqueViewers: viewers.length,
       viewers,
-      forcedFallback: Boolean(normalized && forcedFallback.has(normalized)),
+      forcedFallback: forcedFallback.has(entry.key),
+      qualityProfile: effectiveQuality.profile,
     });
   }
 
@@ -418,6 +611,9 @@ const ADMIN_PATHS = [
   "/admin-panel",
   "/api/admin",
   "/api/admin/*",
+  "/logs",
+  "/api/logs",
+  "/api/logs/*",
 ];
 
 app.use(ADMIN_PATHS, (req, res, next) => {
@@ -440,6 +636,15 @@ const socketMeta = new Map();
 const socketById = new Map();
 const publishers = new Map();
 let nextSocketId = 1;
+
+function getPublisherByNickname(input) {
+  const key = normalizeNicknameKey(input);
+  if (!key) {
+    return { key: "", entry: null };
+  }
+  const entry = publishers.get(key) || null;
+  return { key, entry };
+}
 
 const PORT = process.env.PORT || 3000;
 const SITE_LINKS = [
@@ -586,22 +791,26 @@ function clearFallbackForNickname(nickname) {
   fallbackClients.delete(key);
 }
 
-function normalizeNicknameKey(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  const trimmed = value.trim();
-  return trimmed ? trimmed.toLowerCase() : "";
-}
-
-function normalizeNickname(value) {
+function sanitizeNickname(value) {
   if (typeof value !== "string") {
     return null;
   }
 
   const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/\s+/g, " ");
+}
+
+function normalizeNicknameKey(value) {
+  const sanitized = sanitizeNickname(value);
+  if (!sanitized) {
+    return "";
+  }
+
+  return sanitized.replace(/\s+/g, "").toLowerCase();
 }
 
 function sendJson(target, payload) {
@@ -628,7 +837,9 @@ function broadcastState() {
 }
 
 function getActivePublishers() {
-  return Array.from(publishers.keys()).sort((a, b) => a.localeCompare(b));
+  return Array.from(publishers.values())
+    .map((entry) => entry.nickname)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function broadcastPublisherList() {
@@ -643,7 +854,7 @@ function dropViewerEntry(nickname, viewerSocketId, connectionId) {
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const { entry } = getPublisherByNickname(nickname);
   if (!entry) {
     return;
   }
@@ -664,7 +875,7 @@ function detachPublisher(nickname, socket) {
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const { key, entry } = getPublisherByNickname(nickname);
   if (!entry) {
     return;
   }
@@ -673,7 +884,8 @@ function detachPublisher(nickname, socket) {
     return;
   }
 
-  publishers.delete(nickname);
+  publishers.delete(key);
+  logEvent("publisher", "Publisher detached", { nickname: entry.nickname });
 
   for (const [viewerSocketId, connectionIds] of entry.viewers.entries()) {
     const viewerSocket = socketById.get(viewerSocketId);
@@ -684,7 +896,7 @@ function detachPublisher(nickname, socket) {
     for (const connectionId of connectionIds) {
       sendJson(viewerSocket, {
         type: "STREAM_ENDED",
-        nickname,
+        nickname: entry.nickname,
         connectionId,
       });
 
@@ -695,12 +907,18 @@ function detachPublisher(nickname, socket) {
     }
   }
 
-  if (gsiState.currentFocus === nickname) {
+  if (
+    typeof gsiState.currentFocus === "string" &&
+    normalizeNicknameKey(gsiState.currentFocus) === key
+  ) {
     gsiState.currentFocus = null;
     broadcastState();
+    logEvent("focus", "Focus cleared because publisher detached", {
+      nickname: entry.nickname,
+    });
   }
 
-  clearFallbackForNickname(nickname);
+  clearFallbackForNickname(entry.nickname);
   broadcastPublisherList();
 }
 
@@ -724,7 +942,7 @@ function stopViewerSubscription(
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const { entry } = getPublisherByNickname(nickname);
   if (!entry) {
     return;
   }
@@ -733,12 +951,13 @@ function stopViewerSubscription(
     type: "VIEWER_DISCONNECTED",
     viewerSocketId: meta.id,
     connectionId,
-    nickname,
+    nickname: entry.nickname,
   });
 }
 
 app.post("/api/gsi", (req, res) => {
   const data = req.body || {};
+  const previousFocus = gsiState.currentFocus;
 
   if (data.allplayers && typeof data.allplayers === "object") {
     const updatedPlayers = {};
@@ -774,122 +993,61 @@ app.post("/api/gsi", (req, res) => {
   }
 
   if (data.player && typeof data.player === "object") {
-    let observerSlot = Number(data.player.observer_slot);
-    if (!Number.isFinite(observerSlot)) observerSlot = null;
-
     const spectargetRaw =
       data.player.spectarget ?? data.player?.state?.spectarget ?? null;
 
-    const playerSteamIdRaw =
-      typeof data.player.steamid === "string"
-        ? data.player.steamid.trim()
-        : typeof data.player.steamid === "number"
-        ? String(Math.trunc(data.player.steamid))
-        : "";
-
-    const playerSteamIdNormalized = normalizeSteamId(playerSteamIdRaw) ?? (playerSteamIdRaw || null);
-    const targetMeta = parseSpectatorTarget(spectargetRaw);
-
-    let targetInfo = null;
-
-    const playerInfo = playerSteamIdNormalized
-      ? playerDirectory.bySteamId.get(playerSteamIdNormalized) || null
-      : null;
-
-    if (targetMeta.steamId) {
-      targetInfo = playerDirectory.bySteamId.get(targetMeta.steamId) || null;
-    }
-
-    if (!targetInfo && targetMeta.nameLower) {
-      const candidate = playerDirectory.byNameLower.get(targetMeta.nameLower) || null;
-      if (candidate) {
-        targetInfo = candidate;
+    const pickName = (info) => {
+      if (!info) {
+        return null;
       }
-    }
-
-    if (!targetInfo) {
-      const slotsToCheck = [];
-      const addSlot = (value) => {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric) || numeric <= 0) {
-          return;
-        }
-        if (!slotsToCheck.includes(numeric)) {
-          slotsToCheck.push(numeric);
-        }
-      };
-
-      addSlot(targetMeta.slot);
-      addSlot(observerSlot);
-
-      for (const desiredSlot of slotsToCheck) {
-        const bucket = playerDirectory.byObserverSlot.get(desiredSlot);
-        if (!bucket || !bucket.length) {
-          continue;
-        }
-
-        for (const info of bucket) {
-          if (!info) {
-            continue;
-          }
-          if (typeof info.name === "string" && info.name.trim()) {
-            targetInfo = info;
-            break;
-          }
-        }
-
-        if (targetInfo) {
-          break;
-        }
-      }
-    }
-
-    if (!targetInfo && targetMeta.steamId) {
-      for (const info of Object.values(gsiState.players)) {
-        if (!info || info.steamId !== targetMeta.steamId) {
-          continue;
-        }
-        if (typeof info.name === "string" && info.name.trim()) {
-          targetInfo = info;
-        }
-        break;
-      }
-    }
-
-    if (!targetInfo && targetMeta.nameLower) {
-      for (const info of Object.values(gsiState.players)) {
-        if (!info) {
-          continue;
-        }
-
-        const candidateName = typeof info.name === "string" ? info.name.trim() : "";
-        if (!candidateName) {
-          continue;
-        }
-
-        if (candidateName.toLowerCase() === targetMeta.nameLower) {
-          targetInfo = info;
-          break;
-        }
-      }
-    }
-
-    if (!targetInfo && playerInfo) {
-      targetInfo = playerInfo;
-    }
+      const value = typeof info.name === "string" ? info.name.trim() : "";
+      return value || null;
+    };
 
     let focusName = null;
-    if (targetInfo?.name && targetInfo.name.trim()) {
-      focusName = targetInfo.name.trim();
-    } else if (targetMeta.name) {
-      focusName = targetMeta.name;
-    } else if (typeof data.player?.name === "string" && data.player.name.trim()) {
-      focusName = data.player.name.trim();
+
+    if (
+      spectargetRaw !== null &&
+      spectargetRaw !== undefined &&
+      !(typeof spectargetRaw === "string" && !spectargetRaw.trim())
+    ) {
+      const targetMeta = parseSpectatorTarget(spectargetRaw);
+
+      if (targetMeta.steamId) {
+        focusName = pickName(gsiState.players[targetMeta.steamId]);
+        if (!focusName && data.allplayers && typeof data.allplayers === "object") {
+          focusName = pickName(data.allplayers[targetMeta.steamId]);
+        }
+      }
+
+      if (!focusName && Number.isFinite(targetMeta.slot) && targetMeta.slot > 0) {
+        const bucket = playerDirectory.byObserverSlot.get(targetMeta.slot);
+        if (Array.isArray(bucket)) {
+          for (const info of bucket) {
+            focusName = pickName(info);
+            if (focusName) {
+              break;
+            }
+          }
+        }
+      }
+
+      if (!focusName && targetMeta.nameLower) {
+        focusName = pickName(playerDirectory.byNameLower.get(targetMeta.nameLower));
+      }
+
+      if (!focusName && data.allplayers && typeof data.allplayers === "object") {
+        const directKey = String(spectargetRaw);
+        focusName = pickName(data.allplayers[directKey]);
+      }
+
+      if (!focusName && targetMeta.name) {
+        focusName = targetMeta.name.trim();
+      }
     }
 
     gsiState.currentFocus = focusName || null;
   } else {
-    // если нет блока player в payload — сбрасываем фокус, чтобы Full_CAM не залипал123
     gsiState.currentFocus = null;
   }
 
@@ -911,6 +1069,12 @@ app.post("/api/gsi", (req, res) => {
   }
 
   broadcastState();
+  if (previousFocus !== gsiState.currentFocus) {
+    logEvent("focus", "Focus updated", {
+      previous: previousFocus,
+      next: gsiState.currentFocus,
+    });
+  }
   res.json({ ok: true });
 });
 
@@ -980,6 +1144,24 @@ app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
     siteLinks: SITE_LINKS,
     ownerIp: OWNER_IP,
     forcedFallback: getForcedFallbackList(),
+    quality: {
+      defaultProfile: adminConfig.quality?.defaultProfile || "HIGH",
+      defaultParams: resolveQualityProfile(
+        adminConfig.quality?.defaultProfile,
+        adminConfig.quality?.defaultCustom
+      ),
+      overrides: Object.entries(adminConfig.quality?.cameraOverrides || {}).map(
+        ([key, value]) => ({
+          key,
+          nickname: value.nickname,
+          profile: value.profile,
+          params: resolveQualityProfile(
+            value.profile,
+            value.profile === "CUSTOM" ? value.custom : adminConfig.quality?.defaultCustom
+          ),
+        })
+      ),
+    },
     updatedAt: new Date().toISOString(),
   });
 });
@@ -1016,6 +1198,11 @@ app.post("/api/admin/allowed-ips", requireAdminAccess, async (req, res) => {
   }
 
   res.json({ ok: true, allowedIps: adminConfig.allowedIps });
+  logEvent("admin", "IP allowlisted", {
+    ip: normalizedIp,
+    label,
+    admin: req.adminClientIp,
+  });
 });
 
 app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) => {
@@ -1050,6 +1237,10 @@ app.delete("/api/admin/allowed-ips/:ip", requireAdminAccess, async (req, res) =>
   }
 
   res.json({ ok: true, allowedIps: adminConfig.allowedIps });
+  logEvent("admin", "IP removed from allowlist", {
+    ip: normalizedIp,
+    admin: req.adminClientIp,
+  });
 });
 
 app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
@@ -1060,21 +1251,27 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const { entry } = getPublisherByNickname(nickname);
   if (!entry) {
     res.status(404).json({ error: "No active camera with that nickname" });
     return;
   }
 
-  detachPublisher(nickname, entry.socket);
-  res.json({ ok: true, nickname });
+  detachPublisher(entry.nickname, entry.socket);
+  logEvent("admin", "Publisher kicked", {
+    nickname: entry.nickname,
+    admin: req.adminClientIp,
+  });
+  res.json({ ok: true, nickname: entry.nickname });
 });
 
 app.post("/api/admin/fallback", requireAdminAccess, (req, res) => {
-  const nickname = normalizeNickname(req.body?.nickname);
-  const mode = typeof req.body?.mode === "string" ? req.body.mode.trim().toLowerCase() : "";
+  const nickname = sanitizeNickname(req.body?.nickname);
+  const key = normalizeNicknameKey(nickname);
+  const mode =
+    typeof req.body?.mode === "string" ? req.body.mode.trim().toLowerCase() : "";
 
-  if (!nickname) {
+  if (!key || !nickname) {
     res.status(400).json({ error: "nickname is required" });
     return;
   }
@@ -1082,13 +1279,183 @@ app.post("/api/admin/fallback", requireAdminAccess, (req, res) => {
   const enable = mode === "mjpeg" || mode === "fallback" || mode === "force";
 
   if (enable) {
-    forcedFallback.add(nickname);
+    forcedFallback.set(key, nickname);
   } else {
-    forcedFallback.delete(nickname);
+    forcedFallback.delete(key);
   }
 
   broadcastForcedFallback();
+  logEvent("fallback", enable ? "Forced MJPEG enabled" : "Forced MJPEG cleared", {
+    nickname,
+    admin: req.adminClientIp,
+  });
   res.json({ ok: true, forcedFallback: getForcedFallbackList() });
+});
+
+app.get("/api/admin/quality", requireAdminAccess, (_req, res) => {
+  ensureQualityConfigShape(adminConfig);
+  const quality = adminConfig.quality;
+
+  const overrides = Object.entries(quality.cameraOverrides || {}).map(
+    ([key, value]) => ({
+      key,
+      nickname: value.nickname,
+      profile: value.profile,
+      params: resolveQualityProfile(
+        value.profile,
+        value.profile === "CUSTOM" ? value.custom : quality.defaultCustom
+      ),
+    })
+  );
+
+  res.json({
+    availableProfiles: {
+      LOW: { ...QUALITY_PROFILES.LOW },
+      MED: { ...QUALITY_PROFILES.MED },
+      HIGH: { ...QUALITY_PROFILES.HIGH },
+      CUSTOM: resolveQualityProfile("CUSTOM", quality.defaultCustom),
+    },
+    default: {
+      profile: quality.defaultProfile,
+      params: resolveQualityProfile(quality.defaultProfile, quality.defaultCustom),
+      custom: quality.defaultCustom,
+    },
+    overrides,
+  });
+});
+
+app.post("/api/admin/quality/default", requireAdminAccess, async (req, res) => {
+  ensureQualityConfigShape(adminConfig);
+  const quality = adminConfig.quality;
+
+  const profileName = normalizeProfileName(req.body?.profile);
+  if (!profileName) {
+    res.status(400).json({ error: "Unknown profile" });
+    return;
+  }
+
+  if (req.body?.custom) {
+    quality.defaultCustom = sanitizeQualityParams(req.body.custom, quality.defaultCustom);
+  }
+
+  if (profileName === "CUSTOM") {
+    quality.defaultCustom = sanitizeQualityParams(req.body?.custom, quality.defaultCustom);
+  }
+
+  quality.defaultProfile = profileName;
+
+  try {
+    await persistAdminConfig();
+  } catch (error) {
+    console.error("Failed to persist quality default", error);
+    res.status(500).json({ error: "Failed to save configuration" });
+    return;
+  }
+
+  for (const entry of publishers.values()) {
+    if (!quality.cameraOverrides[entry.key]) {
+      sendQualityProfileUpdate(entry);
+    }
+  }
+
+  logEvent("admin", "Default quality profile updated", {
+    profile: profileName,
+    admin: req.adminClientIp,
+  });
+
+  res.json({
+    ok: true,
+    default: {
+      profile: quality.defaultProfile,
+      params: resolveQualityProfile(quality.defaultProfile, quality.defaultCustom),
+      custom: quality.defaultCustom,
+    },
+  });
+});
+
+app.post("/api/admin/quality/camera", requireAdminAccess, async (req, res) => {
+  ensureQualityConfigShape(adminConfig);
+  const quality = adminConfig.quality;
+
+  const nickname = sanitizeNickname(req.body?.nickname);
+  const key = normalizeNicknameKey(nickname);
+  if (!key || !nickname) {
+    res.status(400).json({ error: "nickname is required" });
+    return;
+  }
+
+  const requestedProfileRaw = typeof req.body?.profile === "string" ? req.body.profile.trim() : "";
+  const requestedProfile = normalizeProfileName(requestedProfileRaw);
+  const removeOverride =
+    !requestedProfile || requestedProfileRaw.toLowerCase() === "inherit" || req.body?.remove === true;
+
+  if (removeOverride) {
+    const existed = Boolean(quality.cameraOverrides[key]);
+    delete quality.cameraOverrides[key];
+
+    try {
+      await persistAdminConfig();
+    } catch (error) {
+      console.error("Failed to persist quality override removal", error);
+      res.status(500).json({ error: "Failed to save configuration" });
+      return;
+    }
+
+    notifyQualityProfileForKey(key);
+    if (existed) {
+      logEvent("admin", "Camera quality override cleared", {
+        nickname,
+        admin: req.adminClientIp,
+      });
+    }
+
+    res.json({ ok: true, override: null });
+    return;
+  }
+
+  if (!requestedProfile) {
+    res.status(400).json({ error: "Unknown profile" });
+    return;
+  }
+
+  const override = {
+    profile: requestedProfile,
+    nickname,
+  };
+
+  if (requestedProfile === "CUSTOM") {
+    override.custom = sanitizeQualityParams(req.body?.custom, quality.defaultCustom);
+  }
+
+  quality.cameraOverrides[key] = override;
+
+  try {
+    await persistAdminConfig();
+  } catch (error) {
+    console.error("Failed to persist quality override", error);
+    res.status(500).json({ error: "Failed to save configuration" });
+    return;
+  }
+
+  notifyQualityProfileForKey(key);
+  logEvent("admin", "Camera quality override updated", {
+    nickname,
+    profile: requestedProfile,
+    admin: req.adminClientIp,
+  });
+
+  res.json({
+    ok: true,
+    override: {
+      key,
+      nickname,
+      profile: override.profile,
+      params: resolveQualityProfile(
+        override.profile,
+        override.profile === "CUSTOM" ? override.custom : quality.defaultCustom
+      ),
+    },
+  });
 });
 
 app.get("/camera/:nickname", (_req, res) => {
@@ -1107,6 +1474,7 @@ app.post("/admin/focus", requireAdminAccess, (req, res) => {
 
   gsiState.currentFocus = nickname;
   broadcastState();
+  logEvent("focus", "Focus manually set", { nickname, admin: req.adminClientIp });
   res.json({ ok: true, currentFocus: gsiState.currentFocus });
 });
 
@@ -1120,17 +1488,30 @@ app.post("/api/fallback/frame", (req, res) => {
 
   const nicknameKey = normalizeNicknameKey(nicknameRaw);
   if (!nicknameKey || !framePayload) {
+    logEvent("error", "Fallback frame rejected", {
+      nickname: nicknameRaw,
+      reason: "missing data",
+    });
     res.status(400).json({ error: "nickname and frame are required" });
     return;
   }
 
   const buffer = Buffer.from(framePayload, "base64");
   if (!buffer.length) {
+    logEvent("error", "Fallback frame rejected", {
+      nickname: nicknameKey,
+      reason: "empty buffer",
+    });
     res.status(400).json({ error: "frame is empty" });
     return;
   }
 
   if (buffer.length > 2_000_000) {
+    logEvent("error", "Fallback frame rejected", {
+      nickname: nicknameKey,
+      reason: "frame too large",
+      size: buffer.length,
+    });
     res.status(413).json({ error: "frame is too large" });
     return;
   }
@@ -1143,6 +1524,32 @@ app.post("/api/fallback/frame", (req, res) => {
 
   fallbackFrames.set(nicknameKey, record);
   broadcastFallbackFrame(nicknameKey, record);
+
+  res.json({ ok: true });
+});
+
+app.post("/api/publisher/quality-event", (req, res) => {
+  const nickname = sanitizeNickname(req.body?.nickname);
+  const key = normalizeNicknameKey(nickname);
+
+  if (!nickname || !key) {
+    res.status(400).json({ error: "nickname is required" });
+    return;
+  }
+
+  const entry = publishers.get(key);
+  const fromProfile = normalizeProfileName(req.body?.fromProfile) || req.body?.fromProfile || null;
+  const toProfile = normalizeProfileName(req.body?.toProfile) || req.body?.toProfile || null;
+  const reason = typeof req.body?.reason === "string" && req.body.reason.trim() ? req.body.reason.trim() : "auto";
+  const metrics = req.body?.metrics && typeof req.body.metrics === "object" ? req.body.metrics : undefined;
+
+  logEvent("quality", "Publisher quality profile adjusted", {
+    nickname: (entry && entry.nickname) || nickname,
+    fromProfile,
+    toProfile,
+    reason,
+    metrics,
+  });
 
   res.json({ ok: true });
 });
@@ -1182,38 +1589,87 @@ app.get("/fallback/mjpeg/:nickname", (req, res) => {
   });
 });
 
+app.get("/logs", requireAdminAccess, (_req, res) => {
+  res.sendFile(path.join(__dirname, "private", "logs.html"));
+});
+
+app.get("/api/logs/export", requireAdminAccess, (_req, res) => {
+  res.json({ logs: serverLogs });
+});
+
+app.get("/api/logs/stream", requireAdminAccess, (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const client = res;
+  logStreamClients.add(client);
+  logEvent("admin", "Log stream connected", { admin: req.adminClientIp });
+
+  const snapshot = `event: snapshot\ndata:${JSON.stringify(serverLogs)}\n\n`;
+  try {
+    client.write(snapshot);
+  } catch (error) {
+    // ignore snapshot failures
+  }
+
+  req.on("close", () => {
+    logStreamClients.delete(client);
+    logEvent("admin", "Log stream disconnected", { admin: req.adminClientIp });
+  });
+});
+
 function handleHello(socket, meta, payload) {
   const role = typeof payload.role === "string" ? payload.role.trim().toLowerCase() : "";
 
   if (role === "publisher") {
-    const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
-    if (!nickname) {
+    const nickname = sanitizeNickname(payload.nickname);
+    const key = normalizeNicknameKey(nickname);
+
+    if (!nickname || !key) {
       sendJson(socket, { type: "ERROR", message: "nickname is required for publisher" });
+      logEvent("error", "Publisher HELLO missing nickname", {});
       return;
     }
 
-    const existing = publishers.get(nickname);
+    const { entry: existing } = getPublisherByNickname(nickname);
     if (existing && existing.socket !== socket) {
       sendJson(socket, {
         type: "ERROR",
         message: "Nickname already in use. Wait until it is released.",
       });
+      logEvent("publisher", "Publisher rejected due to duplicate nickname", {
+        nickname,
+      });
       return;
     }
 
-    if (meta.nickname && meta.nickname !== nickname) {
+    if (meta.nicknameKey && meta.nicknameKey !== key) {
       detachPublisher(meta.nickname, socket);
     }
 
     let entry = existing;
     if (!entry || entry.socket !== socket) {
-      entry = { socket, viewers: new Map() };
-      publishers.set(nickname, entry);
+      entry = { socket, viewers: new Map(), nickname, key };
+      publishers.set(key, entry);
+    } else {
+      entry.nickname = nickname;
+      entry.key = key;
     }
 
     meta.role = "publisher";
     meta.nickname = nickname;
-    sendJson(socket, { type: "PUBLISHER_REGISTERED", nickname });
+    meta.nicknameKey = key;
+
+    const effectiveQuality = getEffectiveQualityForKey(key);
+    sendJson(socket, {
+      type: "PUBLISHER_REGISTERED",
+      nickname,
+      qualityProfile: effectiveQuality,
+    });
+    sendQualityProfileUpdate(entry);
+    logEvent("publisher", "Publisher registered", { nickname });
     broadcastPublisherList();
     return;
   }
@@ -1223,33 +1679,40 @@ function handleHello(socket, meta, payload) {
     sendJson(socket, { type: "VIEWER_REGISTERED", role });
     sendJson(socket, { type: "ACTIVE_PUBLISHERS", publishers: getActivePublishers() });
     sendJson(socket, { type: "FORCED_FALLBACK", nicknames: getForcedFallbackList() });
+    logEvent("viewer", "Viewer connected", { role, socketId: meta.id });
     return;
   }
 
   sendJson(socket, { type: "ERROR", message: "unknown role" });
+  logEvent("error", "Unknown role in HELLO", { role: payload.role });
 }
 
 function handleViewerOffer(socket, meta, payload) {
   const connectionId = payload.connectionId;
-  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+  const nickname = sanitizeNickname(payload.nickname);
+  const key = normalizeNicknameKey(nickname);
 
-  if (!connectionId || !nickname) {
+  if (!connectionId || !key) {
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const entry = publishers.get(key);
   if (!entry) {
     sendJson(socket, {
       type: "STREAM_UNAVAILABLE",
       nickname,
       connectionId,
     });
+    logEvent("viewer", "Viewer offer rejected because publisher missing", {
+      nickname,
+      socketId: meta.id,
+    });
     return;
   }
 
   meta.role = meta.role || "viewer";
   if (!meta.subscriptions.has(connectionId)) {
-    meta.subscriptions.set(connectionId, nickname);
+    meta.subscriptions.set(connectionId, entry.nickname);
   }
 
   let viewerSet = entry.viewers.get(meta.id);
@@ -1263,20 +1726,26 @@ function handleViewerOffer(socket, meta, payload) {
     type: "SIGNAL_VIEWER_OFFER",
     viewerSocketId: meta.id,
     connectionId,
-    nickname,
+    nickname: entry.nickname,
     sdp: payload.sdp,
+  });
+  logEvent("viewer", "Viewer offer forwarded", {
+    nickname: entry.nickname,
+    socketId: meta.id,
+    connectionId,
   });
 }
 
 function handleViewerIce(meta, payload) {
-  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+  const nickname = sanitizeNickname(payload.nickname);
+  const key = normalizeNicknameKey(nickname);
   const connectionId = payload.connectionId;
 
-  if (!nickname || !connectionId) {
+  if (!key || !connectionId) {
     return;
   }
 
-  const entry = publishers.get(nickname);
+  const entry = publishers.get(key);
   if (!entry) {
     return;
   }
@@ -1285,18 +1754,23 @@ function handleViewerIce(meta, payload) {
     type: "SIGNAL_VIEWER_CANDIDATE",
     viewerSocketId: meta.id,
     connectionId,
-    nickname,
+    nickname: entry.nickname,
     candidate: payload.candidate,
   });
 }
 
 function handleViewerStop(socket, meta, payload) {
   const connectionId = payload.connectionId;
-  const nickname = typeof payload.nickname === "string" ? payload.nickname.trim() : "";
+  const nickname = sanitizeNickname(payload.nickname);
   if (!connectionId || !nickname) {
     return;
   }
   stopViewerSubscription(meta, nickname, connectionId, true);
+  logEvent("viewer", "Viewer stopped subscription", {
+    nickname,
+    socketId: meta.id,
+    connectionId,
+  });
 }
 
 function handlePublisherAnswer(socket, meta, payload) {
@@ -1391,6 +1865,10 @@ wss.on("connection", (socket) => {
     publishers: getActivePublishers(),
     forcedFallback: getForcedFallbackList(),
   });
+  logEvent("socket", "WebSocket connected", {
+    socketId,
+    remote: socket._socket?.remoteAddress || null,
+  });
 
   socket.on("message", (rawMessage) => {
     let payload;
@@ -1440,6 +1918,9 @@ wss.on("connection", (socket) => {
     const metaInfo = socketMeta.get(socket);
     if (!metaInfo) {
       socketById.delete(socketId);
+      logEvent("socket", "WebSocket closed", {
+        socketId,
+      });
       return;
     }
 
@@ -1456,10 +1937,19 @@ wss.on("connection", (socket) => {
 
     socketMeta.delete(socket);
     socketById.delete(socketId);
+    logEvent("socket", "WebSocket closed", {
+      socketId,
+      role: metaInfo.role,
+      nickname: metaInfo.nickname || null,
+    });
   });
 
   socket.on("error", (error) => {
     console.error("WebSocket error:", error);
+    logEvent("error", "WebSocket error", {
+      socketId,
+      message: error?.message || String(error),
+    });
   });
 });
 
@@ -1514,6 +2004,22 @@ wss.on("close", () => {
   clearInterval(heartbeatInterval);
 });
 
+const logHeartbeatInterval = setInterval(() => {
+  if (logStreamClients.size === 0) {
+    return;
+  }
+  const payload = `event: ping\ndata:${Date.now()}\n\n`;
+  for (const client of logStreamClients) {
+    try {
+      client.write(payload);
+    } catch (error) {
+      logStreamClients.delete(client);
+    }
+  }
+}, LOG_HEARTBEAT_MS);
+
+logHeartbeatInterval.unref?.();
+
 server.on("error", (error) => {
   if (error?.code === "EADDRINUSE") {
     console.error(
@@ -1533,4 +2039,5 @@ wss.on("error", (error) => {
 
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
+  logEvent("system", "Server started", { port: PORT });
 });

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Server Logs</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1320;
+      --panel: #171d2d;
+      --border: rgba(120, 140, 200, 0.35);
+      --text: #e6ecff;
+      --muted: rgba(230, 236, 255, 0.6);
+      --accent: #4f7dff;
+      --danger: #ff6b6b;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 280px;
+      padding: 20px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .sidebar h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.85rem;
+      gap: 6px;
+    }
+
+    input,
+    select,
+    button {
+      font: inherit;
+    }
+
+    input[type="text"],
+    select {
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #0c1020;
+      color: var(--text);
+    }
+
+    button {
+      padding: 10px 12px;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    button:hover {
+      opacity: 0.85;
+    }
+
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .checkbox input {
+      width: 18px;
+      height: 18px;
+    }
+
+    .content {
+      flex: 1;
+      padding: 20px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .log-table {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    thead {
+      background: rgba(79, 125, 255, 0.08);
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(230, 236, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .type-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(79, 125, 255, 0.18);
+      color: var(--accent);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .type-tag.error {
+      background: rgba(255, 107, 107, 0.18);
+      color: var(--danger);
+    }
+
+    pre {
+      margin: 0;
+      font-family: "Consolas", "Courier New", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .scroll-area {
+      overflow-y: auto;
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Server Logs</h1>
+    <label>
+      Search text
+      <input id="searchInput" type="text" placeholder="Filter by text or JSON" />
+    </label>
+    <label>
+      Type filter
+      <select id="typeFilter" multiple size="6"></select>
+    </label>
+    <div class="checkbox">
+      <input id="autoScroll" type="checkbox" checked />
+      <span>Auto scroll</span>
+    </div>
+    <div class="checkbox">
+      <input id="liveUpdates" type="checkbox" checked />
+      <span>Live updates</span>
+    </div>
+    <div class="actions">
+      <button id="downloadBtn" type="button">Download JSON</button>
+      <button id="clearBtn" type="button" class="secondary">Clear view</button>
+    </div>
+  </aside>
+  <main class="content">
+    <div class="status-bar">
+      <span id="connectionStatus">Connecting…</span>
+      <span id="logCount">0 entries</span>
+    </div>
+    <div class="log-table">
+      <div class="scroll-area" id="logScroll">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 180px;">Time</th>
+              <th style="width: 120px;">Type</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const searchInput = document.getElementById("searchInput");
+      const typeFilter = document.getElementById("typeFilter");
+      const autoScrollToggle = document.getElementById("autoScroll");
+      const liveUpdatesToggle = document.getElementById("liveUpdates");
+      const downloadBtn = document.getElementById("downloadBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const connectionStatus = document.getElementById("connectionStatus");
+      const logBody = document.getElementById("logBody");
+      const logCount = document.getElementById("logCount");
+      const logScroll = document.getElementById("logScroll");
+
+      let entries = [];
+      let filtered = [];
+      let eventSource = null;
+      let reconnectTimer = null;
+
+      function formatTime(value) {
+        try {
+          const date = new Date(value);
+          return date.toLocaleString();
+        } catch (error) {
+          return value;
+        }
+      }
+
+      function getSelectedTypes() {
+        return Array.from(typeFilter.selectedOptions).map((option) => option.value);
+      }
+
+      function refreshTypeFilter() {
+        const known = new Set(entries.map((entry) => entry.type));
+        const selected = new Set(getSelectedTypes());
+
+        const currentOptions = new Set(Array.from(typeFilter.options).map((option) => option.value));
+        let changed = false;
+        if (known.size !== currentOptions.size) {
+          changed = true;
+        } else {
+          for (const value of known) {
+            if (!currentOptions.has(value)) {
+              changed = true;
+              break;
+            }
+          }
+        }
+        if (!changed) {
+          return;
+        }
+
+        typeFilter.innerHTML = "";
+        const sorted = Array.from(known).sort();
+        sorted.forEach((value) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          if (!selected.size || selected.has(value)) {
+            option.selected = true;
+          }
+          typeFilter.appendChild(option);
+        });
+      }
+
+      function render() {
+        const needle = searchInput.value.trim().toLowerCase();
+        const typeSelection = new Set(getSelectedTypes());
+        filtered = entries.filter((entry) => {
+          if (typeSelection.size && !typeSelection.has(entry.type)) {
+            return false;
+          }
+          if (!needle) {
+            return true;
+          }
+          const detailText = entry.detail ? JSON.stringify(entry.detail) : "";
+          return (
+            (entry.message && entry.message.toLowerCase().includes(needle)) ||
+            detailText.toLowerCase().includes(needle)
+          );
+        });
+
+        logBody.innerHTML = "";
+        const fragment = document.createDocumentFragment();
+        filtered.forEach((entry) => {
+          const row = document.createElement("tr");
+
+          const timeCell = document.createElement("td");
+          timeCell.textContent = formatTime(entry.timestamp);
+          row.appendChild(timeCell);
+
+          const typeCell = document.createElement("td");
+          const badge = document.createElement("span");
+          badge.className = "type-tag" + (entry.type === "error" ? " error" : "");
+          badge.textContent = entry.type;
+          typeCell.appendChild(badge);
+          row.appendChild(typeCell);
+
+          const messageCell = document.createElement("td");
+          const text = document.createElement("div");
+          text.textContent = entry.message;
+          messageCell.appendChild(text);
+          if (entry.detail) {
+            const detailPre = document.createElement("pre");
+            detailPre.textContent = JSON.stringify(entry.detail, null, 2);
+            messageCell.appendChild(detailPre);
+          }
+          row.appendChild(messageCell);
+
+          fragment.appendChild(row);
+        });
+        logBody.appendChild(fragment);
+
+        logCount.textContent = `${entries.length} entries`;
+        if (autoScrollToggle.checked) {
+          requestAnimationFrame(() => {
+            logScroll.scrollTop = logScroll.scrollHeight;
+          });
+        }
+      }
+
+      function connect() {
+        if (eventSource) {
+          eventSource.close();
+        }
+
+        connectionStatus.textContent = "Connecting…";
+        eventSource = new EventSource("/api/logs/stream");
+
+        eventSource.addEventListener("snapshot", (event) => {
+          try {
+            entries = JSON.parse(event.data);
+            refreshTypeFilter();
+            render();
+            connectionStatus.textContent = "Live";
+          } catch (error) {
+            console.error("Failed to parse snapshot", error);
+          }
+        });
+
+        eventSource.addEventListener("log", (event) => {
+          if (!liveUpdatesToggle.checked) {
+            return;
+          }
+          try {
+            const entry = JSON.parse(event.data);
+            entries.push(entry);
+            if (entries.length > 1000) {
+              entries.shift();
+            }
+            refreshTypeFilter();
+            render();
+          } catch (error) {
+            console.error("Failed to parse log entry", error);
+          }
+        });
+
+        eventSource.addEventListener("error", () => {
+          connectionStatus.textContent = "Disconnected. Retrying…";
+          if (reconnectTimer) {
+            return;
+          }
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connect();
+          }, 3000);
+        });
+      }
+
+      searchInput.addEventListener("input", render);
+      typeFilter.addEventListener("change", render);
+      liveUpdatesToggle.addEventListener("change", () => {
+        if (liveUpdatesToggle.checked) {
+          render();
+        }
+      });
+      clearBtn.addEventListener("click", () => {
+        entries = [];
+        render();
+      });
+      downloadBtn.addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/logs/export", { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(`Request failed: ${response.status}`);
+          }
+          const payload = await response.json();
+          const json = JSON.stringify(payload, null, 2);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          anchor.download = `server-logs-${stamp}.json`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.error("Failed to download logs", error);
+          alert("Unable to download logs. Check console for details.");
+        }
+      });
+
+      connect();
+    })();
+  </script>
+</body>
+</html>

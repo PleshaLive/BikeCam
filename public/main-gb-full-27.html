@@ -114,17 +114,19 @@
       let reconnectTimer = null;
       let connectionCounter = 0;
 
-      const knownPublishers = new Set();
-      const sessions = new Map();
+    const knownPublishers = new Map();
+    const sessions = new Map();
   const retryCounts = new Map();
   const fallbackNicknames = new Set();
   const forcedFallbackOverrides = new Set();
-      let fallbackTimer = null;
-      let fallbackTimerNickname = null;
+  let fallbackTimer = null;
+  let fallbackTimerKey = null;
 
-      let desiredFocus = null;
+  let desiredFocusKey = null;
+  let desiredFocusDisplay = null;
   let displayedStream = null;
   let displayedNickname = null;
+  let displayedNicknameKey = null;
   let activeVideoIndex = 0;
   let swapToken = 0;
 
@@ -133,7 +135,18 @@
           return null;
         }
         const trimmed = name.trim();
-        return trimmed.length ? trimmed : null;
+        if (!trimmed) {
+          return null;
+        }
+        return trimmed.replace(/\s+/g, " ");
+      }
+
+      function nicknameKey(name) {
+        const normalized = normalizeNickname(name);
+        if (!normalized) {
+          return null;
+        }
+        return normalized.replace(/\s+/g, "").toLowerCase();
       }
 
       function createConnectionId() {
@@ -209,12 +222,21 @@
       }
 
       function showFallback(nickname) {
-        if (!fallbackSettings.mjpeg || !nickname) {
+        if (!fallbackSettings.mjpeg) {
           return;
         }
 
-        const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
-        fallbackLayer.dataset.nickname = nickname;
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!normalized || !key) {
+          return;
+        }
+
+        const url =
+          window.WebRTC_SUPPORT?.createMjpegUrl?.(normalized) ||
+          `/fallback/mjpeg/${encodeURIComponent(normalized)}?t=${Date.now()}`;
+        fallbackLayer.dataset.nickname = normalized;
+        fallbackLayer.dataset.nicknameKey = key;
         fallbackLayer.src = url;
         ensureLayerVisible(fallbackLayer);
         fallbackLayer.style.zIndex = "3";
@@ -224,74 +246,92 @@
         }
 
         displayedStream = null;
-        displayedNickname = nickname;
+        displayedNickname = normalized;
+        displayedNicknameKey = key;
       }
 
       function hideFallback(nickname) {
-        if (nickname && fallbackLayer.dataset.nickname && fallbackLayer.dataset.nickname !== nickname) {
-          return;
+        if (nickname) {
+          const key = nicknameKey(nickname);
+          if (key && fallbackLayer.dataset.nicknameKey && fallbackLayer.dataset.nicknameKey !== key) {
+            return;
+          }
         }
 
         fallbackLayer.style.display = "none";
         fallbackLayer.dataset.nickname = "";
+        fallbackLayer.dataset.nicknameKey = "";
         if (fallbackLayer.src) {
           fallbackLayer.removeAttribute("src");
         }
       }
 
       function scheduleFallback(nickname) {
-        if (!fallbackSettings.mjpeg || !nickname) {
+        if (!fallbackSettings.mjpeg) {
           return;
         }
 
-        if (fallbackLayer.dataset.nickname === nickname && fallbackLayer.style.display === "block") {
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!normalized || !key) {
           return;
         }
 
-        if (fallbackTimer && fallbackTimerNickname === nickname) {
+        if (fallbackLayer.dataset.nicknameKey === key && fallbackLayer.style.display === "block") {
+          return;
+        }
+
+        if (fallbackTimer && fallbackTimerKey === key) {
           return;
         }
 
         clearTimeout(fallbackTimer);
-        fallbackTimerNickname = nickname;
+        fallbackTimerKey = key;
         fallbackTimer = setTimeout(() => {
           fallbackTimer = null;
-          fallbackTimerNickname = null;
-          showFallback(nickname);
+          fallbackTimerKey = null;
+          showFallback(normalized);
         }, 2500);
       }
 
       function cancelFallback(nickname) {
-        if (fallbackTimer && (!nickname || fallbackTimerNickname === nickname)) {
+        const key = nicknameKey(nickname);
+        if (fallbackTimer && (!key || fallbackTimerKey === key)) {
           clearTimeout(fallbackTimer);
           fallbackTimer = null;
-          fallbackTimerNickname = null;
+          fallbackTimerKey = null;
         }
         deactivateFallback(nickname);
       }
 
       function activateFallback(nickname) {
-        if (!fallbackSettings.mjpeg || !nickname) {
+        if (!fallbackSettings.mjpeg) {
           return;
         }
-        fallbackNicknames.add(nickname);
-        if (desiredFocus === nickname) {
-          scheduleFallback(nickname);
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!key || !normalized) {
+          return;
+        }
+        fallbackNicknames.add(key);
+        if (desiredFocusKey === key) {
+          scheduleFallback(normalized);
         }
       }
 
       function deactivateFallback(nickname) {
-        if (!nickname) {
+        const key = nicknameKey(nickname);
+        if (!key) {
           return;
         }
-        fallbackNicknames.delete(nickname);
-        if (fallbackLayer.dataset.nickname === nickname) {
-          hideFallback(nickname);
+        fallbackNicknames.delete(key);
+        if (fallbackLayer.dataset.nicknameKey === key) {
+          hideFallback(fallbackLayer.dataset.nickname);
         }
-        if (fallbackTimer && fallbackTimerNickname === nickname) {
+        if (fallbackTimer && fallbackTimerKey === key) {
           clearTimeout(fallbackTimer);
           fallbackTimer = null;
-          fallbackTimerNickname = null;
+          fallbackTimerKey = null;
         }
       }
 
@@ -299,9 +339,9 @@
         const updated = new Set();
         if (Array.isArray(list)) {
           for (const value of list) {
-            const normalized = normalizeNickname(value);
-            if (normalized) {
-              updated.add(normalized.toLowerCase());
+            const key = nicknameKey(value);
+            if (key) {
+              updated.add(key);
             }
           }
         }
@@ -310,8 +350,8 @@
         if (updated.size !== forcedFallbackOverrides.size) {
           changed = true;
         } else {
-          for (const name of forcedFallbackOverrides) {
-            if (!updated.has(name)) {
+          for (const key of forcedFallbackOverrides) {
+            if (!updated.has(key)) {
               changed = true;
               break;
             }
@@ -323,25 +363,21 @@
         }
 
         const affected = new Set();
-        for (const name of forcedFallbackOverrides) {
-          affected.add(name);
+        for (const key of forcedFallbackOverrides) {
+          affected.add(key);
         }
-        for (const name of updated) {
-          affected.add(name);
+        for (const key of updated) {
+          affected.add(key);
         }
 
         forcedFallbackOverrides.clear();
-        for (const name of updated) {
-          forcedFallbackOverrides.add(name);
+        for (const key of updated) {
+          forcedFallbackOverrides.add(key);
         }
 
-        for (const nickname of Array.from(sessions.keys())) {
-          const normalized = normalizeNickname(nickname);
-          if (!normalized) {
-            continue;
-          }
-          if (affected.has(normalized.toLowerCase())) {
-            restartSession(nickname, { failed: true });
+        for (const [sessionKey, session] of sessions.entries()) {
+          if (affected.has(sessionKey)) {
+            restartSession(session.nickname, { failed: true });
           }
         }
 
@@ -349,11 +385,11 @@
       }
 
       function hasForcedFallback(nickname) {
-        const normalized = normalizeNickname(nickname);
-        if (!normalized) {
+        const key = nicknameKey(nickname);
+        if (!key) {
           return false;
         }
-        return forcedFallbackOverrides.has(normalized.toLowerCase());
+        return forcedFallbackOverrides.has(key);
       }
 
       function hideVideoLayer(video) {
@@ -379,6 +415,7 @@
           swapToken += 1;
           displayedStream = null;
           displayedNickname = null;
+          displayedNicknameKey = null;
           activeVideoIndex = 0;
           for (const layer of videoLayers) {
             hideVideoLayer(layer);
@@ -387,7 +424,10 @@
         }
 
         if (displayedStream === nextStream) {
-          displayedNickname = nickname || displayedNickname;
+          if (nickname) {
+            displayedNickname = normalizeNickname(nickname) || displayedNickname;
+            displayedNicknameKey = nicknameKey(displayedNickname) || displayedNicknameKey;
+          }
           ensureVideoVisible(videoLayers[activeVideoIndex]);
           const activeLayer = videoLayers[activeVideoIndex];
           if (activeLayer) {
@@ -427,7 +467,8 @@
             targetVideo.style.zIndex = "2";
 
             displayedStream = nextStream;
-            displayedNickname = nickname || null;
+            displayedNickname = normalizeNickname(nickname) || null;
+            displayedNicknameKey = nicknameKey(displayedNickname);
             activeVideoIndex = targetIndex;
           })
           .catch((error) => {
@@ -436,7 +477,7 @@
       }
 
       function updateDisplay() {
-        if (!desiredFocus) {
+        if (!desiredFocusKey) {
           hideFallback();
           if (displayedStream) {
             setDisplay(null, null);
@@ -444,31 +485,33 @@
           return;
         }
 
-        const session = sessions.get(desiredFocus);
+        const session = sessions.get(desiredFocusKey);
 
         if (session?.stream) {
-          cancelFallback(desiredFocus);
+          cancelFallback(session.nickname);
           if (displayedStream !== session.stream) {
             setDisplay(session.stream, session.nickname);
           }
           return;
         }
 
-        if (fallbackNicknames.has(desiredFocus)) {
-          if (fallbackLayer.dataset.nickname === desiredFocus && fallbackLayer.style.display === "block") {
+        if (fallbackNicknames.has(desiredFocusKey)) {
+          if (
+            fallbackLayer.dataset.nicknameKey === desiredFocusKey &&
+            fallbackLayer.style.display === "block"
+          ) {
             return;
           }
-          scheduleFallback(desiredFocus);
+          scheduleFallback(desiredFocusDisplay || session?.nickname || "");
           return;
         }
 
-        hideFallback(desiredFocus);
+        hideFallback(desiredFocusDisplay);
 
-        if (!sessions.has(desiredFocus)) {
+        if (!sessions.has(desiredFocusKey)) {
           if (displayedStream) {
             setDisplay(null, null);
           }
-          return;
         }
       }
 
@@ -479,7 +522,9 @@
       }
 
       function cleanupSession(nickname, { notify = true, retainFallback = false } = {}) {
-        const session = sessions.get(nickname);
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        const session = key ? sessions.get(key) : null;
         if (!session) {
           return;
         }
@@ -489,12 +534,12 @@
           session.connectTimer = null;
         }
 
-        sessions.delete(nickname);
+        sessions.delete(key);
 
         if (notify && wsReady) {
           sendSignal({
             type: "VIEWER_STOP",
-            nickname,
+            nickname: session.nickname,
             connectionId: session.connectionId,
           });
         }
@@ -513,65 +558,67 @@
         }
 
         if (!retainFallback) {
-          retryCounts.delete(nickname);
-          cancelFallback(nickname);
+          retryCounts.delete(key);
+          cancelFallback(session.nickname);
         } else {
-          fallbackNicknames.add(nickname);
+          fallbackNicknames.add(key);
         }
 
-        if (displayedNickname === nickname) {
+        if (displayedNicknameKey === key) {
           setDisplay(null, null);
         }
       }
 
       function cleanupAllSessions({ notify = false } = {}) {
-        for (const nickname of Array.from(sessions.keys())) {
-          cleanupSession(nickname, { notify, retainFallback: false });
+        for (const session of Array.from(sessions.values())) {
+          cleanupSession(session.nickname, { notify, retainFallback: false });
         }
       }
 
       function restartSession(nickname, { failed = false } = {}) {
-        if (!nickname) {
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!key || !normalized) {
           return;
         }
 
-        if (!knownPublishers.has(nickname)) {
-          cleanupSession(nickname, { notify: true, retainFallback: false });
-          retryCounts.delete(nickname);
-          cancelFallback(nickname);
+        if (!knownPublishers.has(key)) {
+          cleanupSession(normalized, { notify: true, retainFallback: false });
+          retryCounts.delete(key);
+          cancelFallback(normalized);
           return;
         }
 
         const retainFallback = failed && fallbackSettings.mjpeg;
-        cleanupSession(nickname, { notify: true, retainFallback });
+        cleanupSession(normalized, { notify: true, retainFallback });
 
-        let attempts = retryCounts.get(nickname) || 0;
+        let attempts = retryCounts.get(key) || 0;
 
         if (failed) {
           attempts += 1;
-          retryCounts.set(nickname, attempts);
+          retryCounts.set(key, attempts);
           if (fallbackSettings.mjpeg) {
-            activateFallback(nickname);
+            activateFallback(normalized);
           }
         } else {
           attempts = 0;
-          retryCounts.set(nickname, 0);
-          cancelFallback(nickname);
+          retryCounts.set(key, 0);
+          cancelFallback(normalized);
         }
 
         if (!viewerRegistered || !wsReady) {
           return;
         }
 
-        if (!hasWebRTC || hasForcedFallback(nickname)) {
-          activateFallback(nickname);
+        if (!hasWebRTC || hasForcedFallback(normalized)) {
+          activateFallback(normalized);
           return;
         }
 
         const retryDelay = failed ? Math.min(2000, 400 + attempts * 400) : 200;
 
         setTimeout(() => {
-          startSession(nickname);
+          startSession(normalized);
         }, retryDelay);
       }
 
@@ -580,36 +627,49 @@
           return;
         }
 
-        if (!knownPublishers.has(nickname)) {
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!normalized || !key) {
           return;
         }
 
-        if (sessions.has(nickname)) {
+        if (!knownPublishers.has(key)) {
+          return;
+        }
+
+        if (sessions.has(key)) {
           return;
         }
 
         if (!hasWebRTC) {
-          activateFallback(nickname);
+          activateFallback(normalized);
           return;
         }
 
         const connectionId = createConnectionId();
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-        const session = { nickname, connectionId, pc, stream: null, connectTimer: null };
-        sessions.set(nickname, session);
+        const session = {
+          key,
+          nickname: normalized,
+          connectionId,
+          pc,
+          stream: null,
+          connectTimer: null,
+        };
+        sessions.set(key, session);
 
         if (fallbackSettings.mjpeg) {
-          activateFallback(nickname);
+          activateFallback(normalized);
         }
 
-        const attempts = retryCounts.get(nickname) || 0;
+        const attempts = retryCounts.get(key) || 0;
         const connectTimeout = Math.min(8000, 4000 + attempts * 500);
         session.connectTimer = setTimeout(() => {
-          const current = sessions.get(nickname);
+          const current = sessions.get(key);
           if (!current || current.connectionId !== connectionId) {
             return;
           }
-          restartSession(nickname, { failed: true });
+          restartSession(normalized, { failed: true });
         }, connectTimeout);
 
         pc.ontrack = (event) => {
@@ -618,7 +678,7 @@
             return;
           }
 
-          const current = sessions.get(nickname);
+          const current = sessions.get(key);
           if (!current || current.connectionId !== connectionId) {
             stream.getTracks().forEach((track) => track.stop());
             return;
@@ -629,12 +689,12 @@
             current.connectTimer = null;
           }
 
-          retryCounts.set(nickname, 0);
-          cancelFallback(nickname);
+          retryCounts.set(key, 0);
+          cancelFallback(current.nickname);
 
           current.stream = stream;
-          if (desiredFocus === nickname) {
-            setDisplay(stream, nickname);
+          if (desiredFocusKey === key) {
+            setDisplay(stream, current.nickname);
           }
         };
 
@@ -644,14 +704,14 @@
           }
           sendSignal({
             type: "VIEWER_ICE",
-            nickname,
+            nickname: normalized,
             connectionId,
             candidate: event.candidate,
           });
         };
 
         pc.onconnectionstatechange = () => {
-          const current = sessions.get(nickname);
+          const current = sessions.get(key);
           if (!current || current.connectionId !== connectionId) {
             return;
           }
@@ -661,8 +721,8 @@
               clearTimeout(current.connectTimer);
               current.connectTimer = null;
             }
-            retryCounts.set(nickname, 0);
-            cancelFallback(nickname);
+            retryCounts.set(key, 0);
+            cancelFallback(current.nickname);
             return;
           }
 
@@ -671,9 +731,9 @@
               clearTimeout(current.connectTimer);
               current.connectTimer = null;
             }
-            restartSession(nickname, { failed: true });
+            restartSession(current.nickname, { failed: true });
           } else if (pc.connectionState === "closed") {
-            cleanupSession(nickname, { notify: false });
+            cleanupSession(current.nickname, { notify: false });
           }
         };
 
@@ -683,7 +743,7 @@
 
           sendSignal({
             type: "VIEWER_OFFER",
-            nickname,
+            nickname: normalized,
             connectionId,
             sdp: pc.localDescription,
           });
@@ -692,8 +752,8 @@
             clearTimeout(session.connectTimer);
             session.connectTimer = null;
           }
-      console.error("Failed to start WebRTC session", error);
-          restartSession(nickname, { failed: true });
+          console.error("Failed to start WebRTC session", error);
+          restartSession(normalized, { failed: true });
         }
       }
 
@@ -702,15 +762,15 @@
           return;
         }
 
-        for (const nickname of knownPublishers) {
-          if (!sessions.has(nickname)) {
-            startSession(nickname);
+        for (const [key, display] of knownPublishers.entries()) {
+          if (!sessions.has(key)) {
+            startSession(display);
           }
         }
 
-        for (const nickname of Array.from(sessions.keys())) {
-          if (!knownPublishers.has(nickname)) {
-            cleanupSession(nickname, { notify: true });
+        for (const [key, session] of Array.from(sessions.entries())) {
+          if (!knownPublishers.has(key)) {
+            cleanupSession(session.nickname, { notify: true });
           }
         }
 
@@ -719,28 +779,30 @@
 
       function handlePublisherAnswer(payload) {
         const nickname = normalizeNickname(payload.nickname);
-        if (!nickname) {
+        const key = nicknameKey(nickname);
+        if (!key) {
           return;
         }
 
-        const session = sessions.get(nickname);
+        const session = sessions.get(key);
         if (!session || session.connectionId !== payload.connectionId) {
           return;
         }
 
         session.pc.setRemoteDescription(payload.sdp).catch((error) => {
       console.error("Failed to apply answer", error);
-          restartSession(nickname, { failed: true });
+          restartSession(session.nickname, { failed: true });
         });
       }
 
       async function handlePublisherCandidate(payload) {
         const nickname = normalizeNickname(payload.nickname);
-        if (!nickname) {
+        const key = nicknameKey(nickname);
+        if (!key) {
           return;
         }
 
-        const session = sessions.get(nickname);
+        const session = sessions.get(key);
         if (!session || session.connectionId !== payload.connectionId) {
           return;
         }
@@ -754,16 +816,17 @@
 
       function handleStreamUnavailable(payload) {
         const nickname = normalizeNickname(payload.nickname);
-        if (!nickname) {
+        const key = nicknameKey(nickname);
+        if (!key) {
           return;
         }
 
-        const session = sessions.get(nickname);
+        const session = sessions.get(key);
         if (!session || session.connectionId !== payload.connectionId) {
           return;
         }
 
-        restartSession(nickname, { failed: true });
+        restartSession(session.nickname, { failed: true });
       }
 
       function handleActivePublishers(list) {
@@ -772,14 +835,19 @@
         if (Array.isArray(list)) {
           for (const name of list) {
             const normalized = normalizeNickname(name);
-            if (normalized) {
-              knownPublishers.add(normalized);
+            const key = nicknameKey(normalized);
+            if (normalized && key) {
+              knownPublishers.set(key, normalized);
+              if (desiredFocusKey === key) {
+                desiredFocusDisplay = normalized;
+              }
             }
           }
         }
 
-        if (desiredFocus && !knownPublishers.has(desiredFocus)) {
-          desiredFocus = null;
+        if (desiredFocusKey && !knownPublishers.has(desiredFocusKey)) {
+          desiredFocusKey = null;
+          desiredFocusDisplay = null;
         }
 
         syncSessions();
@@ -787,17 +855,15 @@
 
       function handleFocusUpdate(name) {
         const normalized = normalizeNickname(name);
-        if (normalized === desiredFocus) {
-          return;
-        }
-
-        if (fallbackTimer && fallbackTimerNickname && fallbackTimerNickname !== normalized) {
+        const key = nicknameKey(normalized);
+        if (fallbackTimer && fallbackTimerKey && fallbackTimerKey !== key) {
           clearTimeout(fallbackTimer);
           fallbackTimer = null;
-          fallbackTimerNickname = null;
+          fallbackTimerKey = null;
         }
 
-        desiredFocus = normalized;
+        desiredFocusKey = key;
+        desiredFocusDisplay = key ? knownPublishers.get(key) || normalized : null;
         updateDisplay();
       }
 
