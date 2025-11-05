@@ -5,12 +5,11 @@ const STATIC_CONFIG = {
   iceServers: [
     {
       urls: [
-        "turn:turn.raptors.life:3478?transport=udp",
-        "turn:turn.raptors.life:3478?transport=tcp",
         "turns:turn.raptors.life:5349",
+        "turn:turn.raptors.life:3478",
       ],
-      username: "streamer",
-      credential: "VeryStrongPass123",
+      username: "user",
+      credential: "pass",
     },
     {
       urls: ["stun:stun.l.google.com:19302"],
@@ -108,6 +107,5 @@ export function createMjpegUrl(nickname) {
   }
 
   const safeName = encodeURIComponent(nickname);
-  const endpoint = cachedConfig?.fallback?.endpoint || STATIC_CONFIG.fallback.endpoint;
-  return `${endpoint.replace(/\/$/, "")}/${safeName}?t=${Date.now()}`;
+  return `${API_BASE}/fallback/mjpeg/${safeName}?t=${Date.now()}`;
 }

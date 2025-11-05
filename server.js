@@ -615,8 +615,6 @@ app.use(ADMIN_PATHS, (req, res, next) => {
   adminAuthMiddleware(req, res, next);
 });
 
-app.use(express.static(path.join(__dirname, "public")));
-
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
@@ -635,7 +633,8 @@ function getPublisherByNickname(input) {
   return { key, entry };
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 4000;
+const HOST = process.env.HOST || "127.0.0.1";
 const SITE_LINKS = [
   { label: "Main Focus", href: "/main-gb-full-27.html" },
   { label: "CT Cameras", href: "/ct-side-gb-27.html" },
@@ -653,12 +652,11 @@ function loadIceServerConfig() {
   return [
     {
       urls: [
-        "turn:turn.raptors.life:3478?transport=udp",
-        "turn:turn.raptors.life:3478?transport=tcp",
         "turns:turn.raptors.life:5349",
+        "turn:turn.raptors.life:3478",
       ],
-      username: "streamer",
-      credential: "VeryStrongPass123",
+      username: "user",
+      credential: "pass",
     },
     {
       urls: ["stun:stun.l.google.com:19302"],
@@ -1992,7 +1990,7 @@ wss.on("error", (error) => {
   console.error("WebSocket server error:", error);
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
-  logEvent("system", "Server started", { port: PORT });
+server.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
+  logEvent("system", "Server started", { host: HOST, port: PORT });
 });
