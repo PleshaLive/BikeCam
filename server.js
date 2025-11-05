@@ -252,8 +252,6 @@ function isIpAllowed(ip) {
   return adminConfig.allowedIps.some((entry) => entry.ip === normalized);
 }
 
-loadAdminConfig();
-
 let gsiState = {
   players: {},
   currentFocus: null,
@@ -302,6 +300,8 @@ const DEFAULT_CUSTOM_PROFILE = {
   maxFramerate: 30,
   scaleResolutionDownBy: 1,
 };
+
+loadAdminConfig();
 
 function logEvent(type, message, detail = null) {
   const entry = {
