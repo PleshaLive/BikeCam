@@ -225,8 +225,12 @@
       </div>
     </div>
   </main>
-  <script>
+  <script type="module">
+    // Updated for TURN server integration
+    import { API_BASE } from "/js/endpoints.js";
+
     (() => {
+      console.log("[API] target", API_BASE);
       const searchInput = document.getElementById("searchInput");
       const typeFilter = document.getElementById("typeFilter");
       const autoScrollToggle = document.getElementById("autoScroll");
@@ -351,7 +355,7 @@
         }
 
         connectionStatus.textContent = "Connecting…";
-        eventSource = new EventSource("/api/logs/stream");
+        eventSource = new EventSource(`${API_BASE}/api/logs/stream`, { withCredentials: true });
 
         eventSource.addEventListener("snapshot", (event) => {
           try {
@@ -406,7 +410,7 @@
       });
       downloadBtn.addEventListener("click", async () => {
         try {
-          const response = await fetch("/api/logs/export", { cache: "no-store" });
+          const response = await fetch(`${API_BASE}/api/logs/export`, { cache: "no-store", credentials: "include" });
           if (!response.ok) {
             throw new Error(`Request failed: ${response.status}`);
           }

@@ -290,11 +290,14 @@
     </section>
   </main>
 
-  <script>
-  const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
-  const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
-  const KICK_ENDPOINT = "/api/admin/kick";
-  const FALLBACK_ENDPOINT = "/api/admin/fallback";
+  <script type="module">
+  // Updated for TURN server integration
+  import { API_BASE } from "./js/endpoints.js";
+
+  const DASHBOARD_ENDPOINT = `${API_BASE}/api/admin/dashboard`;
+  const ADD_IP_ENDPOINT = `${API_BASE}/api/admin/allowed-ips`;
+  const KICK_ENDPOINT = `${API_BASE}/api/admin/kick`;
+  const FALLBACK_ENDPOINT = `${API_BASE}/api/admin/fallback`;
 
     let ownerIp = "";
   let forcedFallbackList = [];
@@ -525,6 +528,7 @@
         const response = await fetch(`${ADD_IP_ENDPOINT}/${encodeURIComponent(ip)}`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -546,6 +550,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ nickname }),
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -570,6 +575,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ nickname: trimmed, mode }),
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -586,7 +592,10 @@
 
     async function loadDashboard() {
       try {
-        const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
+        const response = await fetch(DASHBOARD_ENDPOINT, {
+          cache: "no-store",
+          credentials: "include",
+        });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           throw new Error(payload.error || "Failed to load dashboard");
@@ -619,6 +628,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ip, label }),
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));

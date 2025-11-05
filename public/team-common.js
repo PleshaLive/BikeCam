@@ -1,3 +1,7 @@
+// Updated for TURN server integration
+import { API_BASE, WS_BASE } from "./js/endpoints.js";
+import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support.js";
+
 (async () => {
 	const TEAM_TITLES = {
 		CT: "CT Squad",
@@ -80,26 +84,20 @@
 		return;
 	}
 
-	const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
-		const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
-		let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
-
-		try {
-			const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
-			if (config && typeof config === "object") {
-				resolvedConfig = config;
-			}
-		} catch (error) {
-			resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+	const wsUrl = WS_BASE;
+		let resolvedConfig = await getConfig();
+		if (!resolvedConfig || typeof resolvedConfig !== "object") {
+			resolvedConfig = { iceServers: [], fallback: {} };
 		}
+		console.log("[ICE] using TURN", resolvedConfig.iceServers);
 
-		const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+		const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
 		const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
 		const params = new URLSearchParams(window.location.search || "");
 		const preferFallback = params.get("fallback") === "mjpeg";
 		const userAgent = (navigator.userAgent || "").toLowerCase();
 		const forceFallback = preferFallback || userAgent.includes("obs") || userAgent.includes("vmix");
-		const hasWebRTC = forceFallback ? false : window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+		const hasWebRTC = forceFallback ? false : hasWebRTCSupport();
 		const retryCounts = new Map();
 		const fallbackNicknames = new Set();
 		const fallbackTimers = new Map();
@@ -148,7 +146,7 @@
 			return;
 		}
 
-		const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
+		const url = createMjpegUrl(nickname);
 		slot.fallbackImg.dataset.nickname = nickname;
 		slot.fallbackImg.src = url;
 		slot.fallbackImg.style.display = "block";
@@ -325,7 +323,7 @@
 				return;
 			}
 			setTimeout(() => {
-				fallbackImg.src = window.WebRTC_SUPPORT?.createMjpegUrl?.(targetNickname) || `/fallback/mjpeg/${encodeURIComponent(targetNickname)}?t=${Date.now()}`;
+				fallbackImg.src = createMjpegUrl(targetNickname);
 			}, 1000);
 		});
 
@@ -839,6 +837,8 @@
 		ws.addEventListener("open", () => {
 			wsReady = true;
 			viewerRegistered = false;
+			console.log("[WS] connected to", WS_BASE);
+			console.log("[API] target", API_BASE);
 			ensureStatus("");
 			sendSignal({ type: "HELLO", role: "viewer" });
 		});
@@ -901,7 +901,10 @@
 	async function fetchTeams() {
 		const scoreboardPromise = fetchScoreboardMeta().catch(() => null);
 		try {
-			const response = await fetch("/teams", { cache: "no-store" });
+			const response = await fetch(`${API_BASE}/teams`, {
+				cache: "no-store",
+				credentials: "include",
+			});
 			if (!response.ok) {
 				throw new Error(`Request failed: ${response.status}`);
 			}

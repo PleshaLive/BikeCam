@@ -39,7 +39,6 @@
       display: none;
     }
   </style>
-  <script src="js/webrtc-support.js"></script>
 </head>
 <body>
   <div class="stage">
@@ -49,7 +48,10 @@
     </div>
   </div>
 
-  <script>
+  <script type="module">
+    // Updated for TURN server integration
+    import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support.js";
     document.addEventListener("DOMContentLoaded", async () => {
       const feedStack = document.querySelector(".feed-stack");
       const videoLayers = Array.from(feedStack?.querySelectorAll(".feed-layer") || []);
@@ -83,30 +85,23 @@
           return;
         }
         setTimeout(() => {
-          const url = window.WebRTC_SUPPORT?.createMjpegUrl?.(nickname) || `/fallback/mjpeg/${encodeURIComponent(nickname)}?t=${Date.now()}`;
-          fallbackLayer.src = url;
+          fallbackLayer.src = createMjpegUrl(nickname);
         }, 1000);
       });
-      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
-      const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
-      let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
-
-      try {
-        const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
-        if (config && typeof config === "object") {
-          resolvedConfig = config;
-        }
-      } catch (error) {
-        resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+      const wsUrl = WS_BASE;
+      let resolvedConfig = await getConfig();
+      if (!resolvedConfig || typeof resolvedConfig !== "object") {
+        resolvedConfig = { iceServers: [], fallback: {} };
       }
+      console.log("[ICE] using TURN", resolvedConfig.iceServers);
 
-      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
   const params = new URLSearchParams(window.location.search || "");
   const preferFallback = params.get("fallback") === "mjpeg";
   const userAgent = (navigator.userAgent || "").toLowerCase();
   const forceFallback = preferFallback;
-  const hasWebRTC = forceFallback ? false : window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+  const hasWebRTC = forceFallback ? false : hasWebRTCSupport();
 
       let ws;
       let wsReady = false;
@@ -233,8 +228,7 @@
         }
 
         const url =
-          window.WebRTC_SUPPORT?.createMjpegUrl?.(normalized) ||
-          `/fallback/mjpeg/${encodeURIComponent(normalized)}?t=${Date.now()}`;
+          createMjpegUrl(normalized);
         fallbackLayer.dataset.nickname = normalized;
         fallbackLayer.dataset.nicknameKey = key;
         fallbackLayer.src = url;
@@ -924,6 +918,8 @@
         ws.addEventListener("open", () => {
           wsReady = true;
           viewerRegistered = false;
+          console.log("[WS] connected to", WS_BASE);
+          console.log("[API] target", API_BASE);
           sendSignal({ type: "HELLO", role: "viewer" });
           syncSessions();
         });

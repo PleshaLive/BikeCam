@@ -180,7 +180,6 @@
       text-transform: uppercase;
     }
   </style>
-  <script src="js/webrtc-support.js"></script>
 </head>
 <body>
   <div class="card">
@@ -206,7 +205,10 @@
   <p class="status" id="status">Requesting camera access...</p>
   </div>
 
-  <script>
+  <script type="module">
+    // Updated for TURN server integration
+  import { API_BASE, WS_BASE } from "./js/endpoints.js";
+  import { getConfig, hasWebRTCSupport } from "./js/webrtc-support.js";
     document.addEventListener("DOMContentLoaded", async () => {
       const nicknameSelect = document.getElementById("nicknameSelect");
       const refreshBtn = document.getElementById("refreshBtn");
@@ -218,23 +220,18 @@
       const video = document.getElementById("camPreview");
       const card = document.querySelector(".card");
 
-      const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
-      let resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
-      try {
-        const config = await (window.WebRTC_SUPPORT?.getConfig?.() ?? Promise.resolve(resolvedConfig));
-        if (config && typeof config === "object") {
-          resolvedConfig = config;
-        }
-      } catch (error) {
-        resolvedConfig = { iceServers: defaultIceServers, fallback: {} };
+      let resolvedConfig = await getConfig();
+      if (!resolvedConfig || typeof resolvedConfig !== "object") {
+        resolvedConfig = { iceServers: [], fallback: {} };
       }
+      console.log("[ICE] using TURN", resolvedConfig.iceServers);
 
-      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : defaultIceServers;
+      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
       const fallbackIntervalMs = Math.max(200, Math.round(1000 / Math.max(1, fallbackSettings.maxFps || 5)));
-      const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+      const wsUrl = WS_BASE;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
-      const hasWebRTC = window.WebRTC_SUPPORT?.hasWebRTCSupport?.() ?? typeof window.RTCPeerConnection === "function";
+      const hasWebRTC = hasWebRTCSupport();
 
       const peers = new Map();
       const takenNicknames = new Set();
@@ -402,7 +399,7 @@
           const arrayBuffer = await blob.arrayBuffer();
           const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
 
-          await fetch("/api/fallback/frame", {
+          await fetch(`${API_BASE}/api/fallback/frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -411,6 +408,7 @@
               mimeType: blob.type || "image/jpeg",
             }),
             keepalive: true,
+            credentials: "include",
           });
         } catch (error) {
           // ignore fallback transport errors
@@ -575,7 +573,10 @@
 
           async function loadPlayers() {
             try {
-              const response = await fetch("/players", { cache: "no-store" });
+              const response = await fetch(`${API_BASE}/players`, {
+                cache: "no-store",
+                credentials: "include",
+              });
               if (!response.ok) {
                 throw new Error("Failed to load players");
               }
@@ -855,6 +856,8 @@
 
             ws.addEventListener("open", () => {
               wsReady = true;
+              console.log("[WS] connected to", WS_BASE);
+              console.log("[API] target", API_BASE);
               status.textContent = "Connected to the server. Pick your nickname and enable the camera.";
               ensurePublisherRegistration();
             });

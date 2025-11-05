@@ -566,32 +566,21 @@ function collectPublisherStats() {
   return stats;
 }
 
-const allowedOrigins = [
-  "https://bikecam.onrender.com",
-  "https://raptors.life",
-  "http://localhost:3000",
-];
-
 const adminUser = process.env.ADMIN_USER || "admin";
 const adminPass = process.env.ADMIN_PASS || "changeme";
 
 const app = express();
 app.set("trust proxy", true);
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Not allowed by CORS: " + origin));
-    },
-  })
-);
+// Updated for TURN server integration
+const corsOptions = {
+  origin: ["https://bikecam.onrender.com"],
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(compression());
 app.use(
   helmet({
@@ -660,55 +649,21 @@ const fallbackFrames = new Map();
 const fallbackClients = new Map();
 
 function loadIceServerConfig() {
-  const defaults = [
+  // Updated for TURN server integration
+  return [
     {
       urls: [
-        "stun:stun.l.google.com:19302",
-        "stun:global.stun.twilio.com:3478",
+        "turn:turn.raptors.life:3478?transport=udp",
+        "turn:turn.raptors.life:3478?transport=tcp",
+        "turns:turn.raptors.life:5349",
       ],
+      username: "streamer",
+      credential: "VeryStrongPass123",
+    },
+    {
+      urls: ["stun:stun.l.google.com:19302"],
     },
   ];
-
-  const parsed = [];
-  const envConfig = process.env.ICE_SERVERS;
-
-  if (envConfig) {
-    try {
-      const value = JSON.parse(envConfig);
-      if (Array.isArray(value)) {
-        for (const entry of value) {
-          if (entry && typeof entry === "object" && entry.urls) {
-            parsed.push(entry);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("Failed to parse ICE_SERVERS. Using defaults.", error);
-    }
-  }
-
-  if (parsed.length === 0) {
-    parsed.push(...defaults);
-  }
-
-  const turnUrl = process.env.TURN_URL || process.env.TURN_SERVER || "";
-  if (turnUrl) {
-    const urls = turnUrl
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    if (urls.length) {
-      parsed.push({
-        urls,
-        username: process.env.TURN_USERNAME || process.env.TURN_USER || "",
-        credential:
-          process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || "",
-      });
-    }
-  }
-
-  return parsed;
 }
 
 app.get("/api/webrtc/config", (req, res) => {
@@ -716,7 +671,7 @@ app.get("/api/webrtc/config", (req, res) => {
     iceServers: ICE_SERVER_CONFIG,
     fallback: {
       mjpeg: true,
-      endpoint: "/fallback/mjpeg",
+      endpoint: "https://turn.raptors.life/fallback/mjpeg",
       heartbeatSeconds: 20,
       maxFps: 5,
     },

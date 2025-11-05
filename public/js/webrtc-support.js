@@ -1,100 +1,113 @@
-(function () {
-  const defaultConfig = {
-    iceServers: [
-      {
-        urls: ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
-      },
-    ],
-    fallback: {
-      mjpeg: true,
-      endpoint: "/fallback/mjpeg",
-      heartbeatSeconds: 20,
-      maxFps: 5,
+// Updated for TURN server integration
+import { API_BASE } from "./endpoints.js";
+
+const STATIC_CONFIG = {
+  iceServers: [
+    {
+      urls: [
+        "turn:turn.raptors.life:3478?transport=udp",
+        "turn:turn.raptors.life:3478?transport=tcp",
+        "turns:turn.raptors.life:5349",
+      ],
+      username: "streamer",
+      credential: "VeryStrongPass123",
     },
+    {
+      urls: ["stun:stun.l.google.com:19302"],
+    },
+  ],
+  fallback: {
+    mjpeg: true,
+    endpoint: `${API_BASE}/fallback/mjpeg`,
+    heartbeatSeconds: 20,
+    maxFps: 5,
+  },
+};
+
+let cachedConfig = null;
+let fetchPromise = null;
+
+function cloneIceServers(iceServers) {
+  return (iceServers || []).map((entry) => ({
+    ...entry,
+    urls: Array.isArray(entry.urls) ? [...entry.urls] : entry.urls,
+  }));
+}
+
+function applyConfigOverrides(base, overrides) {
+  const result = {
+    iceServers: cloneIceServers(base.iceServers),
+    fallback: { ...(base.fallback || {}) },
   };
 
-  let cachedConfig = null;
-  let fetchPromise = null;
-
-  function cloneIceServers(iceServers) {
-    return iceServers.map((entry) => ({ ...entry, urls: Array.isArray(entry.urls) ? [...entry.urls] : entry.urls }));
-  }
-
-  function applyConfigOverrides(base, overrides) {
-    const result = {
-      iceServers: cloneIceServers(base.iceServers || []),
-      fallback: { ...(base.fallback || {}) },
-    };
-
-    if (overrides) {
-      if (Array.isArray(overrides.iceServers) && overrides.iceServers.length) {
-        result.iceServers = cloneIceServers(overrides.iceServers);
-      }
-
-      if (overrides.fallback && typeof overrides.fallback === "object") {
-        result.fallback = {
-          ...(base.fallback || {}),
-          ...overrides.fallback,
-        };
-      }
+  if (overrides && typeof overrides === "object") {
+    if (Array.isArray(overrides.iceServers) && overrides.iceServers.length) {
+      result.iceServers = cloneIceServers(overrides.iceServers);
     }
 
-    return result;
+    if (overrides.fallback && typeof overrides.fallback === "object") {
+      result.fallback = {
+        ...(base.fallback || {}),
+        ...overrides.fallback,
+      };
+    }
   }
 
-  async function fetchConfig() {
-    if (cachedConfig) {
-      return cachedConfig;
+  return result;
+}
+
+async function fetchRemoteConfig() {
+  try {
+    const response = await fetch(`${API_BASE}/api/webrtc/config`, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      return applyConfigOverrides(STATIC_CONFIG, null);
     }
 
+    const data = await response.json();
+    return applyConfigOverrides(STATIC_CONFIG, data);
+  } catch (error) {
+    return applyConfigOverrides(STATIC_CONFIG, null);
+  }
+}
+
+function cloneConfig(config) {
+  return {
+    iceServers: cloneIceServers(config.iceServers),
+    fallback: { ...(config.fallback || {}) },
+  };
+}
+
+export async function getConfig() {
+  if (!cachedConfig) {
+    cachedConfig = applyConfigOverrides(STATIC_CONFIG, null);
     if (!fetchPromise) {
-      fetchPromise = (async () => {
-        try {
-          const response = await fetch("/api/webrtc/config", { cache: "no-store" });
-          if (response.ok) {
-            const data = await response.json();
-            cachedConfig = applyConfigOverrides(defaultConfig, data);
-            return cachedConfig;
-          }
-        } catch (error) {
-          // ignore fetch errors, fall back to defaults
-        }
-
-        cachedConfig = applyConfigOverrides(defaultConfig, null);
-        return cachedConfig;
-      })();
+      fetchPromise = fetchRemoteConfig()
+        .then((config) => {
+          cachedConfig = config;
+          return config;
+        })
+        .catch(() => cachedConfig);
     }
 
-    return fetchPromise;
+    await fetchPromise;
   }
 
-  function cloneConfig(config) {
-    return {
-      iceServers: cloneIceServers(config.iceServers || []),
-      fallback: { ...(config.fallback || {}) },
-    };
+  return cloneConfig(cachedConfig);
+}
+
+export function hasWebRTCSupport() {
+  return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
+}
+
+export function createMjpegUrl(nickname) {
+  if (!nickname) {
+    return "";
   }
 
-  function createMjpegUrl(nickname, fallbackConfig) {
-    if (!nickname) {
-      return "";
-    }
-
-    const safeName = encodeURIComponent(nickname);
-    const endpoint = fallbackConfig?.endpoint || defaultConfig.fallback.endpoint;
-    return `${endpoint.replace(/\/$/, "")}/${safeName}?t=${Date.now()}`;
-  }
-
-  window.WebRTC_SUPPORT = {
-    async getConfig() {
-      const config = await fetchConfig();
-      return cloneConfig(config);
-    },
-    hasWebRTCSupport() {
-      return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
-    },
-    createMjpegUrl(nickname) {
-      return createMjpegUrl(nickname, cachedConfig || defaultConfig);
-    },
-  };
-})();
+  const safeName = encodeURIComponent(nickname);
+  const endpoint = cachedConfig?.fallback?.endpoint || STATIC_CONFIG.fallback.endpoint;
+  return `${endpoint.replace(/\/$/, "")}/${safeName}?t=${Date.now()}`;
+}
