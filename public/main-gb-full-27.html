@@ -49,8 +49,14 @@
   </div>
 
   <script type="module">
-    // Updated for TURN server integration
     import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    window.API_BASE = API_BASE;
+    window.WS_BASE = WS_BASE;
+    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE);
+  </script>
+
+  <script type="module">
+    // Updated for TURN server integration
     import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support.js";
     document.addEventListener("DOMContentLoaded", async () => {
       const feedStack = document.querySelector(".feed-stack");
@@ -88,7 +94,7 @@
           fallbackLayer.src = createMjpegUrl(nickname);
         }, 1000);
       });
-      const wsUrl = WS_BASE;
+  const wsUrl = window.WS_BASE;
       let resolvedConfig = await getConfig();
       if (!resolvedConfig || typeof resolvedConfig !== "object") {
         resolvedConfig = { iceServers: [], fallback: {} };
@@ -918,8 +924,8 @@
         ws.addEventListener("open", () => {
           wsReady = true;
           viewerRegistered = false;
-          console.log("[WS] connected to", WS_BASE);
-          console.log("[API] target", API_BASE);
+          console.log("[WS] connected to", window.WS_BASE);
+          console.log("[API] target", window.API_BASE);
           sendSignal({ type: "HELLO", role: "viewer" });
           syncSessions();
         });

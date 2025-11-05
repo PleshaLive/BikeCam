@@ -206,8 +206,14 @@
   </div>
 
   <script type="module">
+    import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    window.API_BASE = API_BASE;
+    window.WS_BASE = WS_BASE;
+    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE);
+  </script>
+
+  <script type="module">
     // Updated for TURN server integration
-  import { API_BASE, WS_BASE } from "./js/endpoints.js";
   import { getConfig, hasWebRTCSupport } from "./js/webrtc-support.js";
     document.addEventListener("DOMContentLoaded", async () => {
       const nicknameSelect = document.getElementById("nicknameSelect");
@@ -229,7 +235,7 @@
       const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
       const fallbackIntervalMs = Math.max(200, Math.round(1000 / Math.max(1, fallbackSettings.maxFps || 5)));
-      const wsUrl = WS_BASE;
+  const wsUrl = window.WS_BASE;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
       const hasWebRTC = hasWebRTCSupport();
 
@@ -399,7 +405,7 @@
           const arrayBuffer = await blob.arrayBuffer();
           const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
 
-          await fetch(`${API_BASE}/api/fallback/frame`, {
+          await fetch(`${window.API_BASE}/api/fallback/frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -573,7 +579,7 @@
 
           async function loadPlayers() {
             try {
-              const response = await fetch(`${API_BASE}/players`, {
+              const response = await fetch(`${window.API_BASE}/players`, {
                 cache: "no-store",
                 credentials: "include",
               });
@@ -856,8 +862,8 @@
 
             ws.addEventListener("open", () => {
               wsReady = true;
-              console.log("[WS] connected to", WS_BASE);
-              console.log("[API] target", API_BASE);
+              console.log("[WS] connected to", window.WS_BASE);
+              console.log("[API] target", window.API_BASE);
               status.textContent = "Connected to the server. Pick your nickname and enable the camera.";
               ensurePublisherRegistration();
             });

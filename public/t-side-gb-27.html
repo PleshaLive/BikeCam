@@ -215,6 +215,12 @@
     </div>
     <div id="cameraGrid"></div>
   </div>
+  <script type="module">
+    import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    window.API_BASE = API_BASE;
+    window.WS_BASE = WS_BASE;
+    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE);
+  </script>
 
   <script>
     window.TEAM_KEY = "T";

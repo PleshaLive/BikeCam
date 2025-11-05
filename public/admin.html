@@ -291,13 +291,19 @@
   </main>
 
   <script type="module">
-  // Updated for TURN server integration
-  import { API_BASE } from "./js/endpoints.js";
+    import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    window.API_BASE = API_BASE;
+    window.WS_BASE = WS_BASE;
+    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE);
+  </script>
 
-  const DASHBOARD_ENDPOINT = `${API_BASE}/api/admin/dashboard`;
-  const ADD_IP_ENDPOINT = `${API_BASE}/api/admin/allowed-ips`;
-  const KICK_ENDPOINT = `${API_BASE}/api/admin/kick`;
-  const FALLBACK_ENDPOINT = `${API_BASE}/api/admin/fallback`;
+  <script type="module">
+  // Updated for TURN server integration
+
+  const DASHBOARD_ENDPOINT = `${window.API_BASE}/api/admin/dashboard`;
+  const ADD_IP_ENDPOINT = `${window.API_BASE}/api/admin/allowed-ips`;
+  const KICK_ENDPOINT = `${window.API_BASE}/api/admin/kick`;
+  const FALLBACK_ENDPOINT = `${window.API_BASE}/api/admin/fallback`;
 
     let ownerIp = "";
   let forcedFallbackList = [];

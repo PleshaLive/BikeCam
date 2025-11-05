@@ -18,7 +18,7 @@ const STATIC_CONFIG = {
   ],
   fallback: {
     mjpeg: true,
-    endpoint: `${API_BASE}/fallback/mjpeg`,
+    endpoint: "https://turn.raptors.life/fallback/mjpeg",
     heartbeatSeconds: 20,
     maxFps: 5,
   },

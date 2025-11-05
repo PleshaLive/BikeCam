@@ -1,5 +1,4 @@
 // Updated for TURN server integration
-import { API_BASE, WS_BASE } from "./js/endpoints.js";
 import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support.js";
 
 (async () => {
@@ -84,7 +83,7 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 		return;
 	}
 
-	const wsUrl = WS_BASE;
+	const wsUrl = window.WS_BASE;
 		let resolvedConfig = await getConfig();
 		if (!resolvedConfig || typeof resolvedConfig !== "object") {
 			resolvedConfig = { iceServers: [], fallback: {} };
@@ -837,8 +836,8 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 		ws.addEventListener("open", () => {
 			wsReady = true;
 			viewerRegistered = false;
-			console.log("[WS] connected to", WS_BASE);
-			console.log("[API] target", API_BASE);
+			console.log("[WS] connected to", window.WS_BASE);
+			console.log("[API] target", window.API_BASE);
 			ensureStatus("");
 			sendSignal({ type: "HELLO", role: "viewer" });
 		});
@@ -901,7 +900,7 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 	async function fetchTeams() {
 		const scoreboardPromise = fetchScoreboardMeta().catch(() => null);
 		try {
-			const response = await fetch(`${API_BASE}/teams`, {
+			const response = await fetch(`${window.API_BASE}/teams`, {
 				cache: "no-store",
 				credentials: "include",
 			});
