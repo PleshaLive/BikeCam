@@ -3,19 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Broadcast Admin Console</title>
+  <title>Broadcast Control Center</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #111324;
-      --panel: #191c33;
-      --panel-alt: #202441;
-      --primary: #6d8bff;
-      --danger: #ff6b6b;
-      --text: #f5f7ff;
-      --muted: rgba(245, 247, 255, 0.65);
-      --border: rgba(255, 255, 255, 0.08);
-      --success: #5bd997;
+      --bg: #0b101e;
+      --panel: rgba(20, 24, 36, 0.94);
+      --panel-alt: rgba(32, 37, 56, 0.9);
+      --border: rgba(90, 120, 230, 0.26);
+      --accent: #5c7cf0;
+      --accent-soft: rgba(92, 124, 240, 0.16);
+      --text: #f2f3fd;
+      --muted: rgba(242, 243, 253, 0.65);
+      --danger: #f26b6b;
+      --success: #63f2a6;
     }
 
     * {
@@ -24,96 +25,253 @@
 
     body {
       margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: var(--bg);
+      padding: 32px 24px 64px;
+      min-height: 100vh;
+      font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background:
+        radial-gradient(circle at 14% 18%, rgba(92, 124, 240, 0.22), transparent 58%),
+        radial-gradient(circle at 82% 14%, rgba(18, 22, 36, 0.72), transparent 62%),
+        linear-gradient(135deg, #05070f 0%, var(--bg) 48%, #04060d 100%);
       color: var(--text);
-      padding: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      justify-items: center;
+      gap: 18px;
+    }
+
+    body > header,
+    body > main {
+      width: min(1080px, 100%);
     }
 
     header {
+      position: relative;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 18px;
+      padding: 28px;
+      border-radius: 22px;
+      background: linear-gradient(155deg, rgba(92, 124, 240, 0.28), rgba(20, 24, 36, 0.96));
+      border: 1px solid var(--border);
+      box-shadow: 0 28px 60px rgba(4, 8, 20, 0.5);
+    }
+
+    header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 16% 22%, rgba(99, 242, 166, 0.2), transparent 60%),
+        radial-gradient(circle at 86% 12%, rgba(92, 124, 240, 0.28), transparent 64%);
+      filter: blur(14px);
+      pointer-events: none;
+    }
+
+    header > * {
+      position: relative;
+      z-index: 1;
     }
 
     h1 {
       margin: 0;
-      letter-spacing: 0.1em;
+      font-size: 1.9rem;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      font-size: 1.8rem;
     }
 
-    nav {
+    #messageBox {
+      min-height: 22px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--success);
+    }
+
+    #messageBox.error {
+      color: var(--danger);
+    }
+
+    #navLinks {
       display: flex;
+      align-items: center;
       flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #navLinks a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: var(--text);
+      background: var(--accent-soft);
+      border: 1px solid rgba(92, 124, 240, 0.3);
+      transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+    }
+
+    #navLinks a:hover {
+      background: rgba(92, 124, 240, 0.3);
+      border-color: rgba(92, 124, 240, 0.5);
+      transform: translateY(-1px);
+    }
+
+    .status-board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
     }
 
-    nav a {
-      text-decoration: none;
-      padding: 8px 14px;
-      border-radius: 999px;
-      background: var(--panel);
+    .status-card {
+      background: linear-gradient(165deg, rgba(32, 37, 56, 0.94), rgba(16, 20, 33, 0.88));
+      border-radius: 16px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
       border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.9rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      transition: background 0.2s ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
-    nav a:hover {
-      background: var(--panel-alt);
+    .status-card span {
+      font-size: 0.74rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .status-card strong {
+      font-size: 1.1rem;
     }
 
     main {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 24px;
+      gap: 20px;
     }
 
     section {
-      background: var(--panel);
+      position: relative;
+      padding: 24px;
+      border-radius: 20px;
       border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
+      background: linear-gradient(185deg, rgba(20, 24, 36, 0.95), rgba(10, 14, 24, 0.9));
+      box-shadow: 0 22px 48px rgba(4, 8, 20, 0.45);
+      backdrop-filter: blur(12px);
     }
 
-    h2 {
-      margin: 0;
-      font-size: 1.1rem;
+    section::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 20px;
+      background: radial-gradient(circle at 18% 18%, rgba(92, 124, 240, 0.14), transparent 62%);
+      pointer-events: none;
+    }
+
+    section h2 {
+      margin: 0 0 18px;
+      font-size: 1.18rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+      color: var(--muted);
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.92rem;
+      border-radius: 16px;
+      overflow: hidden;
+      background: linear-gradient(175deg, rgba(32, 37, 56, 0.94), rgba(16, 20, 33, 0.88));
+      border: 1px solid rgba(92, 124, 240, 0.22);
     }
 
-    th, td {
-      border-bottom: 1px solid var(--border);
-      padding: 10px 6px;
-      text-align: left;
-    }
-
-    th {
-      font-weight: 600;
-      color: var(--muted);
-      letter-spacing: 0.06em;
+    thead {
+      background: rgba(92, 124, 240, 0.14);
       text-transform: uppercase;
-      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    th,
+    td {
+      padding: 13px 16px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     tbody tr:last-child td {
       border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: linear-gradient(90deg, rgba(92, 124, 240, 0.12), rgba(92, 124, 240, 0.05));
+    }
+
+    button {
+      padding: 8px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: transparent;
+      color: var(--text);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+    }
+
+    button:hover {
+      background: rgba(92, 124, 240, 0.2);
+      border-color: rgba(92, 124, 240, 0.45);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      border-color: rgba(92, 124, 240, 0.4);
+      color: var(--accent);
+    }
+
+    button.danger {
+      border-color: rgba(242, 107, 107, 0.35);
+      color: var(--danger);
+    }
+
+    form {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      margin-top: 6px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(10, 12, 20, 0.72);
+      color: var(--text);
+      font-size: 0.96rem;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: rgba(92, 124, 240, 0.55);
+      box-shadow: 0 0 0 2px rgba(92, 124, 240, 0.18);
     }
 
     .tag {
@@ -121,96 +279,33 @@
       align-items: center;
       padding: 4px 10px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
-      font-size: 0.75rem;
+      background: linear-gradient(135deg, rgba(92, 124, 240, 0.3), rgba(92, 124, 240, 0.12));
+      font-size: 0.72rem;
       letter-spacing: 0.06em;
       text-transform: uppercase;
     }
 
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    label {
-      font-size: 0.75rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    input, button {
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--panel-alt);
-      color: var(--text);
-      font-size: 0.95rem;
-    }
-
-    input:focus {
-      outline: 2px solid var(--primary);
-    }
-
-    button {
-      cursor: pointer;
-      border: none;
-      background: linear-gradient(135deg, var(--primary), #3752c7);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-
-    button.danger {
-      background: linear-gradient(135deg, var(--danger), #cc5454);
-    }
-
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-
-    .status-board {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-    }
-
-    .status-card {
-      background: var(--panel-alt);
-      border-radius: 14px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      border: 1px solid var(--border);
-    }
-
-    .status-card span {
-      font-size: 0.75rem;
-      color: var(--muted);
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(92, 124, 240, 0.4), rgba(92, 124, 240, 0.2));
+      font-size: 0.68rem;
       letter-spacing: 0.06em;
       text-transform: uppercase;
+      box-shadow: 0 0 12px rgba(92, 124, 240, 0.28);
     }
 
-    .status-card strong {
-      font-size: 1.1rem;
-    }
-
-    #messageBox {
-      min-height: 22px;
-      font-size: 0.88rem;
-      color: var(--success);
-    }
-
-    .error {
-      color: var(--danger);
-    }
-
-    @media (max-width: 640px) {
+    @media (max-width: 680px) {
       body {
-        padding: 16px;
+        padding: 20px;
+      }
+
+      body > header,
+      body > main {
+        width: 100%;
       }
 
       main {
@@ -225,27 +320,23 @@
     <h1>Broadcast Control Center</h1>
     <div id="messageBox"></div>
     <nav id="navLinks"></nav>
+    <div class="status-board">
+      <div class="status-card">
+        <span>Current Focus</span>
+        <strong id="focusName">--</strong>
+      </div>
+      <div class="status-card">
+        <span>Cameras live/total</span>
+        <strong id="cameraCount">0</strong>
+      </div>
+      <div class="status-card">
+        <span>Last Sync</span>
+        <strong id="updatedAt">--</strong>
+      </div>
+    </div>
   </header>
 
   <main>
-    <section>
-      <h2>Live Status</h2>
-      <div class="status-board">
-        <div class="status-card">
-          <span>Current Focus</span>
-          <strong id="focusName">â€”</strong>
-        </div>
-        <div class="status-card">
-          <span>Active Cameras</span>
-          <strong id="cameraCount">0</strong>
-        </div>
-        <div class="status-card">
-          <span>Last Sync</span>
-          <strong id="updatedAt">â€”</strong>
-        </div>
-      </div>
-    </section>
-
     <section>
       <h2>Allowed Admin IPs</h2>
       <table>
@@ -261,10 +352,12 @@
       </table>
 
       <form id="addIpForm">
-        <label for="ipInput">Add new admin IP</label>
-        <input id="ipInput" name="ip" type="text" placeholder="e.g. 203.0.113.5" required>
-        <label for="labelInput">Label (optional)</label>
-        <input id="labelInput" name="label" type="text" placeholder="Who is this for?">
+        <label for="ipInput">Add new admin IP
+          <input id="ipInput" name="ip" type="text" placeholder="203.0.113.5" required>
+        </label>
+        <label for="labelInput">Label (nickname)
+          <input id="labelInput" name="label" type="text" placeholder="Who is this for?">
+        </label>
         <button type="submit">Add IP</button>
       </form>
     </section>
@@ -274,32 +367,127 @@
       <table>
         <thead>
           <tr>
-            <th>Nickname</th>
-            <th>Viewers</th>
-            <th>Connections</th>
+            <th>Player</th>
+            <th>Team</th>
+            <th>Slot</th>
+            <th>Status</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="cameraTableBody"></tbody>
       </table>
     </section>
+
+    <section>
+      <h2>Server Roster (GSI)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Team</th>
+            <th>Slot</th>
+            <th>Steam ID</th>
+          </tr>
+        </thead>
+        <tbody id="rosterTableBody"></tbody>
+      </table>
+    </section>
   </main>
 
-  <script>
-    const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
-    const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
-    const KICK_ENDPOINT = "/api/admin/kick";
+  <script type="module">
+    import { API_BASE, WS_BASE, LOGO_DB_PROXY } from "/js/endpoints.js";
+    window.API_BASE = API_BASE;
+    window.WS_BASE = WS_BASE;
+    window.LOGO_DB_PROXY = LOGO_DB_PROXY;
+    console.log("[BOOT] API_BASE=%s WS_BASE=%s LOGO_DB_PROXY=%s", API_BASE, WS_BASE, LOGO_DB_PROXY);
+  </script>
+
+  <script type="module">
+    const DASHBOARD_ENDPOINT = `${window.API_BASE}/api/admin/dashboard`;
+    const ADD_IP_ENDPOINT = `${window.API_BASE}/api/admin/allowed-ips`;
+    const KICK_ENDPOINT = `${window.API_BASE}/api/admin/kick`;
+    const FALLBACK_ENDPOINT = `${window.API_BASE}/api/admin/fallback`;
+
     let ownerIp = "";
+    let forcedFallbackList = [];
+
+    const messageBox = document.getElementById("messageBox");
+    const focusName = document.getElementById("focusName");
+    const updatedAt = document.getElementById("updatedAt");
+    const cameraCount = document.getElementById("cameraCount");
+    const navLinks = document.getElementById("navLinks");
+    const ipTableBody = document.getElementById("ipTableBody");
+    const cameraTableBody = document.getElementById("cameraTableBody");
+    const rosterTableBody = document.getElementById("rosterTableBody");
 
     function setMessage(message, isError = false) {
-      const box = document.getElementById("messageBox");
-      box.textContent = message || "";
-      box.classList.toggle("error", Boolean(isError));
+      messageBox.textContent = message || "";
+      messageBox.classList.toggle("error", Boolean(isError));
+    }
+
+    function normalizeName(value) {
+      return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
+    }
+
+    function dedupeRoster(roster) {
+      const seen = new Set();
+      const result = [];
+
+      (Array.isArray(roster) ? roster : []).forEach((player) => {
+        if (!player || typeof player !== "object") {
+          return;
+        }
+        const nameKey = normalizeName(player.name);
+        const idKey = normalizeName(player.steamid || player.steamId || player.id);
+        const dedupeKey = nameKey || idKey;
+        if (dedupeKey && seen.has(dedupeKey)) {
+          return;
+        }
+        if (dedupeKey) {
+          seen.add(dedupeKey);
+        }
+        result.push(player);
+      });
+
+      return result;
+    }
+
+    function buildRosterIndex(roster) {
+      const index = new Map();
+      roster.forEach((player) => {
+        const key = normalizeName(player?.name);
+        if (key && !index.has(key)) {
+          index.set(key, player);
+        }
+      });
+      return index;
+    }
+
+    function getForcedFallbackSet() {
+      const result = new Set();
+      if (!Array.isArray(forcedFallbackList)) {
+        return result;
+      }
+      forcedFallbackList.forEach((value) => {
+        const key = normalizeName(value);
+        if (key) {
+          result.add(key);
+        }
+      });
+      return result;
+    }
+
+    function lookupRosterEntry(rosterIndex, nickname) {
+      const key = normalizeName(nickname);
+      if (key && rosterIndex.has(key)) {
+        return rosterIndex.get(key);
+      }
+      return null;
     }
 
     function formatDate(isoString) {
       if (!isoString) {
-        return "â€”";
+        return "--";
       }
       try {
         const date = new Date(isoString);
@@ -313,21 +501,19 @@
     }
 
     function renderNav(links) {
-      const nav = document.getElementById("navLinks");
-      nav.innerHTML = "";
+      navLinks.innerHTML = "";
       links.forEach((link) => {
         const anchor = document.createElement("a");
         anchor.href = link.href;
         anchor.textContent = link.label;
         anchor.target = "_blank";
         anchor.rel = "noreferrer";
-        nav.appendChild(anchor);
+        navLinks.appendChild(anchor);
       });
     }
 
     function renderIps(items) {
-      const tbody = document.getElementById("ipTableBody");
-      tbody.innerHTML = "";
+      ipTableBody.innerHTML = "";
 
       if (!items.length) {
         const row = document.createElement("tr");
@@ -336,7 +522,7 @@
         cell.textContent = "No IPs yet";
         cell.style.color = "var(--muted)";
         row.appendChild(cell);
-        tbody.appendChild(row);
+        ipTableBody.appendChild(row);
         return;
       }
 
@@ -348,7 +534,7 @@
         row.appendChild(ipCell);
 
         const labelCell = document.createElement("td");
-        labelCell.textContent = entry.label || "â€”";
+        labelCell.textContent = entry.label || "--";
         row.appendChild(labelCell);
 
         const dateCell = document.createElement("td");
@@ -371,53 +557,227 @@
         }
         row.appendChild(actionCell);
 
-        tbody.appendChild(row);
+        ipTableBody.appendChild(row);
       });
     }
 
-    function renderPublishers(items) {
-      const tbody = document.getElementById("cameraTableBody");
-      tbody.innerHTML = "";
+    function renderActiveCameras(publishers, rosterIndex, roster) {
+      cameraTableBody.innerHTML = "";
 
-      if (!items.length) {
+      const publisherEntries = Array.isArray(publishers) ? [...publishers] : [];
+      const rosterEntries = Array.isArray(roster) ? [...roster] : [];
+      const forcedSet = getForcedFallbackSet();
+      const totalPlayers = rosterEntries.length;
+
+      cameraCount.textContent = totalPlayers ? `${publisherEntries.length} / ${totalPlayers}` : `${publisherEntries.length}`;
+
+      const combined = [];
+      const seen = new Set();
+      const rosterKey = (player) => {
+        if (!player || typeof player !== "object") {
+          return null;
+        }
+        return (
+          normalizeName(player.name) ||
+          normalizeName(player.steamid || player.steamId || player.id)
+        );
+      };
+
+      publisherEntries.forEach((publisher) => {
+        const nickname = typeof publisher?.nickname === "string" && publisher.nickname.trim()
+          ? publisher.nickname.trim()
+          : "--";
+        const normalizedNickname = normalizeName(nickname);
+        const rosterEntry = lookupRosterEntry(rosterIndex, nickname) || null;
+        const rosterEntryKey = rosterKey(rosterEntry);
+
+        combined.push({
+          nickname,
+          rosterEntry,
+          publisher,
+          isForced: normalizedNickname ? forcedSet.has(normalizedNickname) : false,
+          viewerCount: publisher?.uniqueViewers ?? publisher?.connections ?? 0,
+        });
+
+        if (normalizedNickname) {
+          seen.add(normalizedNickname);
+        }
+        if (rosterEntryKey) {
+          seen.add(rosterEntryKey);
+        }
+      });
+
+      rosterEntries.forEach((player) => {
+        const playerName = typeof player?.name === "string" && player.name.trim() ? player.name.trim() : "--";
+        const normalizedName = normalizeName(playerName);
+        const key = rosterKey(player) || normalizedName;
+        if (key && seen.has(key)) {
+          return;
+        }
+
+        combined.push({
+          nickname: playerName,
+          rosterEntry: player,
+          publisher: null,
+          isForced: false,
+          viewerCount: 0,
+        });
+
+        if (key) {
+          seen.add(key);
+        }
+      });
+
+      if (!combined.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No active cameras";
+        cell.colSpan = 5;
+        cell.textContent = "No players found";
         cell.style.color = "var(--muted)";
         row.appendChild(cell);
-        tbody.appendChild(row);
-        document.getElementById("cameraCount").textContent = "0";
+        cameraTableBody.appendChild(row);
         return;
       }
 
-      document.getElementById("cameraCount").textContent = items.length.toString();
+      combined.sort((a, b) => {
+        const rosterA = a.rosterEntry || lookupRosterEntry(rosterIndex, a.nickname) || {};
+        const rosterB = b.rosterEntry || lookupRosterEntry(rosterIndex, b.nickname) || {};
+        const teamA = (rosterA.team || "").toUpperCase();
+        const teamB = (rosterB.team || "").toUpperCase();
+        if (teamA !== teamB) {
+          return teamA.localeCompare(teamB);
+        }
+        const slotA = Number(rosterA.observer_slot);
+        const slotB = Number(rosterB.observer_slot);
+        const validA = Number.isFinite(slotA) ? slotA : 999;
+        const validB = Number.isFinite(slotB) ? slotB : 999;
+        if (validA !== validB) {
+          return validA - validB;
+        }
+        const nickA = typeof a.nickname === "string" ? a.nickname : "";
+        const nickB = typeof b.nickname === "string" ? b.nickname : "";
+        return nickA.localeCompare(nickB);
+      });
 
-      items.forEach((entry) => {
+      combined.forEach((entry) => {
+        const { nickname, rosterEntry, publisher, isForced, viewerCount } = entry;
+
         const row = document.createElement("tr");
 
         const nameCell = document.createElement("td");
-        nameCell.textContent = entry.nickname;
+        nameCell.textContent = nickname;
         row.appendChild(nameCell);
 
-        const viewersCell = document.createElement("td");
-        viewersCell.textContent = entry.uniqueViewers.toString();
-        row.appendChild(viewersCell);
+        const teamCell = document.createElement("td");
+        teamCell.textContent = (rosterEntry?.team || "").toUpperCase() || "--";
+        row.appendChild(teamCell);
 
-        const connectionsCell = document.createElement("td");
-        connectionsCell.textContent = entry.connections.toString();
-        row.appendChild(connectionsCell);
+        const slotCell = document.createElement("td");
+        const slotValue = Number(rosterEntry?.observer_slot);
+        slotCell.textContent = Number.isFinite(slotValue) && slotValue > 0 ? String(slotValue) : "--";
+        row.appendChild(slotCell);
+
+        const statusCell = document.createElement("td");
+        if (publisher) {
+          statusCell.textContent = isForced ? `Live (MJPEG, ${viewerCount} viewers)` : `Live (${viewerCount} viewers)`;
+          statusCell.style.color = "var(--success)";
+        } else {
+          statusCell.textContent = "Not streaming";
+          statusCell.style.color = "var(--muted)";
+        }
+        row.appendChild(statusCell);
 
         const actionCell = document.createElement("td");
-        const kickBtn = document.createElement("button");
-        kickBtn.className = "danger";
-        kickBtn.type = "button";
-        kickBtn.textContent = "Kick";
-        kickBtn.addEventListener("click", () => handleKick(entry.nickname));
-        actionCell.appendChild(kickBtn);
-        row.appendChild(actionCell);
+        if (publisher && nickname !== "--") {
+          const fallbackBtn = document.createElement("button");
+          fallbackBtn.className = "secondary";
+          fallbackBtn.type = "button";
+          fallbackBtn.textContent = isForced ? "Use WebRTC" : "Force MJPEG";
+          fallbackBtn.addEventListener("click", () => handleForceFallback(nickname, !isForced));
+          actionCell.appendChild(fallbackBtn);
 
-        tbody.appendChild(row);
+          const kickBtn = document.createElement("button");
+          kickBtn.className = "danger";
+          kickBtn.type = "button";
+          kickBtn.textContent = "Kick";
+          kickBtn.addEventListener("click", () => handleKick(nickname));
+          actionCell.appendChild(kickBtn);
+        }
+
+        if (!actionCell.childElementCount) {
+          actionCell.textContent = "--";
+          actionCell.style.color = "var(--muted)";
+        }
+
+        row.appendChild(actionCell);
+        cameraTableBody.appendChild(row);
+      });
+    }
+
+    function renderServerRoster(roster, cameraNameSet) {
+      rosterTableBody.innerHTML = "";
+      const entries = Array.isArray(roster) ? [...roster] : [];
+
+      if (!entries.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.textContent = "No roster data";
+        cell.style.color = "var(--muted)";
+        row.appendChild(cell);
+        rosterTableBody.appendChild(row);
+        return;
+      }
+
+      entries.sort((a, b) => {
+        const teamA = (a?.team || "").toUpperCase();
+        const teamB = (b?.team || "").toUpperCase();
+        if (teamA !== teamB) {
+          return teamA.localeCompare(teamB);
+        }
+        const slotA = Number(a?.observer_slot);
+        const slotB = Number(b?.observer_slot);
+        const validA = Number.isFinite(slotA) ? slotA : 999;
+        const validB = Number.isFinite(slotB) ? slotB : 999;
+        if (validA !== validB) {
+          return validA - validB;
+        }
+        const nameA = typeof a?.name === "string" ? a.name : "";
+        const nameB = typeof b?.name === "string" ? b.name : "";
+        return nameA.localeCompare(nameB);
+      });
+
+      entries.forEach((player) => {
+        const row = document.createElement("tr");
+        const playerName = typeof player?.name === "string" && player.name.trim() ? player.name.trim() : "--";
+        const teamValue = (player?.team || "").toUpperCase();
+        const slotValue = Number(player?.observer_slot);
+        const steamId = player?.steamid || player?.steamId || player?.id || "--";
+        const nameKey = normalizeName(playerName);
+
+        const nameCell = document.createElement("td");
+        nameCell.textContent = playerName;
+        if (nameKey && cameraNameSet.has(nameKey)) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "camera";
+          nameCell.appendChild(badge);
+        }
+        row.appendChild(nameCell);
+
+        const teamCell = document.createElement("td");
+        teamCell.textContent = teamValue || "--";
+        row.appendChild(teamCell);
+
+        const slotCell = document.createElement("td");
+        slotCell.textContent = Number.isFinite(slotValue) && slotValue > 0 ? String(slotValue) : "--";
+        row.appendChild(slotCell);
+
+        const steamCell = document.createElement("td");
+        steamCell.textContent = steamId;
+        row.appendChild(steamCell);
+
+        rosterTableBody.appendChild(row);
       });
     }
 
@@ -429,6 +789,7 @@
         const response = await fetch(`${ADD_IP_ENDPOINT}/${encodeURIComponent(ip)}`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -450,6 +811,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ nickname }),
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -462,23 +824,27 @@
       }
     }
 
-    async function loadDashboard() {
+    async function handleForceFallback(nickname, enable) {
+      const trimmed = typeof nickname === "string" ? nickname.trim() : "";
+      if (!trimmed) {
+        return;
+      }
+
+      const mode = enable ? "mjpeg" : "auto";
       try {
-        const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
+        const response = await fetch(FALLBACK_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname: trimmed, mode }),
+          credentials: "include",
+        });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Failed to load dashboard");
+          throw new Error(payload.error || "Unable to update fallback");
         }
-
-        const data = await response.json();
-        ownerIp = data.ownerIp;
-        document.getElementById("focusName").textContent = data.currentFocus || "â€”";
-        document.getElementById("updatedAt").textContent = formatDate(data.updatedAt);
-        renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
-        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
-        renderPublishers(Array.isArray(data.publishers) ? data.publishers : []);
+        await loadDashboard();
       } catch (error) {
-        setMessage(error.message || "Dashboard connection failed", true);
+        setMessage(error.message || "Failed to update fallback", true);
       }
     }
 
@@ -495,6 +861,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ip, label }),
+          credentials: "include",
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -507,6 +874,44 @@
         setMessage(error.message || "Failed to add IP", true);
       }
     });
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch(DASHBOARD_ENDPOINT, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Failed to load dashboard");
+        }
+
+        const data = await response.json();
+        ownerIp = data.ownerIp;
+        const focus = data.currentFocus || null;
+        focusName.textContent = focus || "--";
+        updatedAt.textContent = formatDate(data.updatedAt);
+        forcedFallbackList = Array.isArray(data.forcedFallback) ? data.forcedFallback : [];
+        renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
+        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
+
+        const roster = dedupeRoster(Array.isArray(data.roster) ? data.roster : []);
+        const rosterIndex = buildRosterIndex(roster);
+        const publishers = Array.isArray(data.publishers) ? data.publishers : [];
+        const cameraNameSet = new Set();
+        publishers.forEach((entry) => {
+          const key = normalizeName(entry?.nickname);
+          if (key) {
+            cameraNameSet.add(key);
+          }
+        });
+
+        renderActiveCameras(publishers, rosterIndex, roster);
+        renderServerRoster(roster, cameraNameSet);
+      } catch (error) {
+        setMessage(error.message || "Dashboard connection failed", true);
+      }
+    }
 
     loadDashboard();
     setInterval(loadDashboard, 5000);
