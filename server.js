@@ -1103,7 +1103,7 @@ app.post("/api/gsi", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/players", (req, res) => {
+function buildPlayerList() {
   const source = latestGSI && typeof latestGSI === "object" ? latestGSI.allplayers : null;
   const records = [];
 
@@ -1158,7 +1158,11 @@ app.get("/players", (req, res) => {
     return a.name.localeCompare(b.name);
   });
 
-  res.json({ players: records });
+  return records;
+}
+
+app.get("/players", (req, res) => {
+  res.json({ players: buildPlayerList() });
 });
 
 app.get("/current-focus", (req, res) => {
@@ -1253,7 +1257,7 @@ app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
     publishers: collectPublisherStats(),
     currentFocus: gsiState.currentFocus,
     teamNames: gsiState.teamNames,
-    roster: Object.values(gsiState.players),
+  roster: buildPlayerList(),
     siteLinks: SITE_LINKS,
     ownerIp: OWNER_IP,
     forcedFallback: getForcedFallbackList(),
