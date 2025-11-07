@@ -305,6 +305,7 @@
   const ADD_IP_ENDPOINT = `${window.API_BASE}/api/admin/allowed-ips`;
   const KICK_ENDPOINT = `${window.API_BASE}/api/admin/kick`;
   const FALLBACK_ENDPOINT = `${window.API_BASE}/api/admin/fallback`;
+  const PLAYERS_ENDPOINT = `${window.API_BASE}/players`;
 
     let ownerIp = "";
   let forcedFallbackList = [];
@@ -320,6 +321,51 @@
     function setMessage(message, isError = false) {
       messageBox.textContent = message || "";
       messageBox.classList.toggle("error", Boolean(isError));
+    }
+
+    function normalizePlayerKey(entry) {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const steamId = typeof entry.steamId === "string" && entry.steamId.trim() ? entry.steamId.trim() :
+        typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : "";
+      if (steamId) {
+        return `steam:${steamId}`;
+      }
+      const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : "";
+      return name ? `name:${name.toLowerCase()}` : null;
+    }
+
+    function mergeRoster(primary, secondary) {
+      const merged = new Map();
+
+      const addPlayer = (player) => {
+        if (!player || typeof player !== "object") {
+          return;
+        }
+        const key = normalizePlayerKey(player);
+        if (!key) {
+          return;
+        }
+        if (!merged.has(key)) {
+          merged.set(key, { ...player });
+          return;
+        }
+
+        const existing = merged.get(key);
+        merged.set(key, {
+          ...player,
+          ...existing,
+          team: player.team || existing.team || null,
+          observer_slot: player.observer_slot ?? existing.observer_slot ?? null,
+          name: typeof existing.name === "string" && existing.name.trim() ? existing.name : player.name,
+        });
+      };
+
+      primary.forEach(addPlayer);
+      secondary.forEach(addPlayer);
+
+      return Array.from(merged.values());
     }
 
     function formatDate(isoString) {
@@ -613,10 +659,29 @@
         const focus = data.currentFocus || null;
         focusName.textContent = focus || "—";
         updatedAt.textContent = formatDate(data.updatedAt);
-  forcedFallbackList = Array.isArray(data.forcedFallback) ? data.forcedFallback : [];
-  renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
-  renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
-  renderPlayers(Array.isArray(data.roster) ? data.roster : [], Array.isArray(data.publishers) ? data.publishers : []);
+        forcedFallbackList = Array.isArray(data.forcedFallback) ? data.forcedFallback : [];
+        renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
+        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
+
+        const baseRoster = Array.isArray(data.roster) ? data.roster : [];
+        let mergedRoster = baseRoster;
+
+        try {
+          const playersResponse = await fetch(PLAYERS_ENDPOINT, {
+            cache: "no-store",
+            credentials: "include",
+          });
+          if (playersResponse.ok) {
+            const playersPayload = await playersResponse.json().catch(() => ({ players: [] }));
+            const extraPlayers = Array.isArray(playersPayload?.players) ? playersPayload.players : [];
+            mergedRoster = mergeRoster(baseRoster, extraPlayers);
+          }
+        } catch (playerError) {
+          console.warn("Failed to merge players list", playerError);
+          mergedRoster = baseRoster;
+        }
+
+        renderPlayers(mergedRoster, Array.isArray(data.publishers) ? data.publishers : []);
       } catch (error) {
         setMessage(error.message || "Dashboard connection failed", true);
       }
