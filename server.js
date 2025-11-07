@@ -21,6 +21,7 @@ const __dirname = path.dirname(__filename);
 const OWNER_IP = process.env.OWNER_IP || "127.0.0.1";
 const ADMIN_DATA_DIR = path.join(__dirname, "data");
 const ADMIN_CONFIG_PATH = path.join(ADMIN_DATA_DIR, "admin-config.json");
+const PUBLIC_DIR = path.join(__dirname, "public");
 const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)(\.(25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
 const STEAM_UNIVERSE_SHIFT = 56n;
 const STEAM_TYPE_SHIFT = 52n;
@@ -616,6 +617,21 @@ app.use(ADMIN_PATHS, (req, res, next) => {
   adminAuthMiddleware(req, res, next);
 });
 
+// Updated for TURN server integration: expose static frontend assets
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "main-gb-full-27.html"));
+});
+
+app.get("/register.html", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "register.html"));
+});
+
+app.get("/admin.html", (_req, res) => {
+  res.redirect(302, "/admin-panel");
+});
+
+app.use(express.static(PUBLIC_DIR, { index: false, redirect: false }));
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
@@ -635,7 +651,7 @@ function getPublisherByNickname(input) {
 }
 
 const PORT = Number(process.env.PORT) || 4000;
-const HOST = process.env.HOST || "0.0.0.0";
+const HOST = "0.0.0.0";
 const SITE_LINKS = [
   { label: "Main Focus", href: "/main-gb-full-27.html" },
   { label: "CT Cameras", href: "/ct-side-gb-27.html" },
