@@ -629,8 +629,12 @@ app.get("/register.html", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "register.html"));
 });
 
-app.get("/admin.html", (_req, res) => {
-  res.redirect(302, "/admin-panel");
+app.get("/admin.html", (req, res, next) => {
+  res.sendFile(path.join(__dirname, "private", "admin.html"), (error) => {
+    if (error) {
+      next(error);
+    }
+  });
 });
 
 app.get("/assets/team-logos.json", async (_req, res) => {
