@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -220,6 +220,7 @@
   </style>
 </head>
 <body>
+  <!-- Visibility check: ensuring private assets are tracked in VCS -->
   <header>
     <h1>Broadcast Control Center</h1>
     <div id="messageBox"></div>
@@ -232,7 +233,7 @@
       <div class="status-board">
         <div class="status-card">
           <span>Current Focus</span>
-          <strong id="focusName">—</strong>
+          <strong id="focusName">â€”</strong>
         </div>
         <div class="status-card">
           <span>Active Cameras</span>
@@ -240,7 +241,7 @@
         </div>
         <div class="status-card">
           <span>Last Sync</span>
-          <strong id="updatedAt">—</strong>
+          <strong id="updatedAt">â€”</strong>
         </div>
       </div>
     </section>
@@ -298,7 +299,7 @@
 
     function formatDate(isoString) {
       if (!isoString) {
-        return "—";
+        return "â€”";
       }
       try {
         const date = new Date(isoString);
@@ -347,7 +348,7 @@
         row.appendChild(ipCell);
 
         const labelCell = document.createElement("td");
-        labelCell.textContent = entry.label || "—";
+        labelCell.textContent = entry.label || "â€”";
         row.appendChild(labelCell);
 
         const dateCell = document.createElement("td");
@@ -471,7 +472,7 @@
 
         const data = await response.json();
         ownerIp = data.ownerIp;
-        document.getElementById("focusName").textContent = data.currentFocus || "—";
+        document.getElementById("focusName").textContent = data.currentFocus || "â€”";
         document.getElementById("updatedAt").textContent = formatDate(data.updatedAt);
         renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
         renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
