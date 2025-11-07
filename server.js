@@ -635,7 +635,7 @@ function getPublisherByNickname(input) {
 }
 
 const PORT = Number(process.env.PORT) || 4000;
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 const SITE_LINKS = [
   { label: "Main Focus", href: "/main-gb-full-27.html" },
   { label: "CT Cameras", href: "/ct-side-gb-27.html" },
