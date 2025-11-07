@@ -11,6 +11,7 @@ import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -642,37 +643,44 @@ const SITE_LINKS = [
   { label: "Register Camera", href: "/register.html" },
 ];
 
-const ICE_SERVER_CONFIG = loadIceServerConfig();
+
 const MJPEG_BOUNDARY = "frame";
 const fallbackFrames = new Map();
 const fallbackClients = new Map();
 
-function loadIceServerConfig() {
-  // Updated for TURN server integration
-  return [
-    {
-      urls: [
-        "turns:turn.raptors.life:5349",
-        "turn:turn.raptors.life:3478",
-      ],
-      username: "user",
-      credential: "pass",
-    },
-    {
-      urls: ["stun:stun.l.google.com:19302"],
-    },
-  ];
+const TURN_SECRET = process.env.TURN_STATIC_AUTH_SECRET || "7f7125d43be5b0c1c50e99a578e97102";
+
+function genTurnRestCred({ secret, ttlSec = 3600, userId = "pm-camera" }) {
+  const now = Math.floor(Date.now() / 1000);
+  const username = `${now + ttlSec}:${userId}`;      // формат "expires:userId"
+  const credential = crypto.createHmac("sha1", secret)
+    .update(username)
+    .digest("base64");
+  return { username, credential, ttlSec };
 }
 
 app.get("/api/webrtc/config", (req, res) => {
+  const { username, credential, ttlSec } = genTurnRestCred({
+    secret: TURN_SECRET,
+    ttlSec: 3600,
+    userId: "pm-camera"
+  });
+
   res.json({
-    iceServers: ICE_SERVER_CONFIG,
-    fallback: {
-      mjpeg: true,
-      endpoint: "https://turn.raptors.life/fallback/mjpeg",
-      heartbeatSeconds: 20,
-      maxFps: 5,
-    },
+    iceServers: [
+      {
+        urls: [
+          "stun:turn.raptors.life:3478",
+          "turn:turn.raptors.life:3478?transport=udp",
+          "turns:turn.raptors.life:5349?transport=tcp"
+        ],
+        username,
+        credential
+      },
+      // (опционально) Google STUN в хвост:
+      { urls: ["stun:stun.l.google.com:19302"] }
+    ],
+    ttlSec
   });
 });
 
