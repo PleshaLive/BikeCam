@@ -1042,6 +1042,35 @@ app.post("/api/gsi", (req, res) => {
       }
     }
 
+    if (!focusName) {
+      const directName = pickName(data.player);
+      if (directName) {
+        focusName = directName;
+      }
+    }
+
+    if (!focusName) {
+      const observerSlot = Number(data.player?.observer_slot ?? data.player?.state?.observer_slot);
+      if (Number.isFinite(observerSlot) && observerSlot > 0) {
+        const bucket = playerDirectory.byObserverSlot.get(observerSlot);
+        if (Array.isArray(bucket)) {
+          for (const info of bucket) {
+            focusName = pickName(info);
+            if (focusName) {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!focusName) {
+      const steamId = normalizeSteamId(data.player?.steamid);
+      if (steamId) {
+        focusName = pickName(gsiState.players[steamId] || data.allplayers?.[steamId]);
+      }
+    }
+
     gsiState.currentFocus = focusName || null;
   } else {
     gsiState.currentFocus = null;
