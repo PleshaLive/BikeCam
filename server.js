@@ -1,7 +1,6 @@
 import express from "express";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import bodyParser from "body-parser";
 import cors from "cors";
 import compression from "compression";
 import helmet from "helmet";
@@ -12,6 +11,7 @@ import fs from "fs";
 import { promises as fsPromises } from "fs";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -262,6 +262,8 @@ let gsiState = {
     T: null,
   },
 };
+
+let latestGSI = null;
 
 const playerDirectory = {
   bySteamId: new Map(),
@@ -589,7 +591,8 @@ app.use(
     contentSecurityPolicy: false,
   })
 );
-app.use(bodyParser.json({ limit: "5mb" }));
+app.use("/api/fallback/frame", express.json({ limit: "3mb" }));
+app.use(express.json({ limit: "1mb" }));
 
 const adminAuthMiddleware = basicAuth({
   users: { [adminUser]: adminPass },
@@ -630,7 +633,22 @@ app.get("/admin.html", (_req, res) => {
   res.redirect(302, "/admin-panel");
 });
 
-app.use(express.static(PUBLIC_DIR, { index: false, redirect: false }));
+app.get("/assets/team-logos.json", async (_req, res) => {
+  try {
+    const response = await fetch("https://waywayway-production.up.railway.app/teams", { timeout: 8000 });
+    if (!response.ok) {
+      res.status(502).json({ error: "Upstream failed", status: response.status });
+      return;
+    }
+    const data = await response.json();
+    res.set("Cache-Control", "public, max-age=300");
+    res.json(data);
+  } catch (error) {
+    res.status(502).json({ error: "Proxy error", detail: String(error) });
+  }
+});
+
+app.use(express.static(PUBLIC_DIR));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -650,7 +668,7 @@ function getPublisherByNickname(input) {
   return { key, entry };
 }
 
-const PORT = Number(process.env.PORT) || 4000;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = "0.0.0.0";
 const SITE_LINKS = [
   { label: "Main Focus", href: "/main-gb-full-27.html" },
@@ -934,6 +952,7 @@ function stopViewerSubscription(
 
 app.post("/api/gsi", (req, res) => {
   const data = req.body || {};
+  latestGSI = data;
   const previousFocus = gsiState.currentFocus;
 
   if (data.allplayers && typeof data.allplayers === "object") {
@@ -1056,15 +1075,61 @@ app.post("/api/gsi", (req, res) => {
 });
 
 app.get("/players", (req, res) => {
-  const names = new Set();
+  const source = latestGSI && typeof latestGSI === "object" ? latestGSI.allplayers : null;
+  const records = [];
 
-  for (const player of Object.values(gsiState.players)) {
-    if (player?.name) {
-      names.add(player.name);
+  if (source && typeof source === "object") {
+    for (const key of Object.keys(source)) {
+      const entry = source[key] || {};
+      const id = typeof entry.steamid === "string" && entry.steamid.trim() ? entry.steamid.trim() : String(key);
+      const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : id;
+      const team = typeof entry.team === "string" && entry.team.trim() ? entry.team.trim() : null;
+      const observerSlotRaw = entry.observer_slot ?? entry.observer_slot_raw ?? null;
+      const observerSlot = Number.isFinite(Number(observerSlotRaw)) ? Number(observerSlotRaw) : null;
+
+      records.push({
+        id,
+        name,
+        team,
+        observer_slot: observerSlot,
+        state: entry.state && typeof entry.state === "object" ? entry.state : null,
+      });
+    }
+  } else {
+    for (const player of Object.values(gsiState.players)) {
+      if (!player) {
+        continue;
+      }
+      const id = typeof player.steamId === "string" && player.steamId.trim() ? player.steamId.trim() : player.rawSteamId || "";
+      const name = typeof player.name === "string" && player.name.trim() ? player.name.trim() : id || "Player";
+      const observerSlot = Number.isFinite(Number(player.observer_slot)) ? Number(player.observer_slot) : null;
+      const team = typeof player.team === "string" && player.team.trim() ? player.team.trim() : null;
+
+      records.push({
+        id: id || name,
+        name,
+        team,
+        observer_slot: observerSlot,
+        state: null,
+      });
     }
   }
 
-  res.json({ players: [...names].sort() });
+  records.sort((a, b) => {
+    const teamA = (a.team || "").toUpperCase();
+    const teamB = (b.team || "").toUpperCase();
+    if (teamA !== teamB) {
+      return teamA.localeCompare(teamB);
+    }
+    const slotA = Number.isFinite(a.observer_slot) ? a.observer_slot : 999;
+    const slotB = Number.isFinite(b.observer_slot) ? b.observer_slot : 999;
+    if (slotA !== slotB) {
+      return slotA - slotB;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  res.json({ players: records });
 });
 
 app.get("/current-focus", (req, res) => {
@@ -1076,35 +1141,77 @@ app.get("/api/current-focus", (req, res) => {
 });
 
 app.get("/teams", (req, res) => {
-  const teams = {};
+  const payload = latestGSI && typeof latestGSI === "object" ? latestGSI : {};
+  const source = payload.allplayers && typeof payload.allplayers === "object" ? payload.allplayers : {};
+  const hints = {
+    CT: typeof payload?.map?.team_ct?.name === "string" && payload.map.team_ct.name.trim()
+      ? payload.map.team_ct.name.trim()
+      : gsiState.teamNames.CT,
+    T: typeof payload?.map?.team_t?.name === "string" && payload.map.team_t.name.trim()
+      ? payload.map.team_t.name.trim()
+      : gsiState.teamNames.T,
+  };
 
-  const players = Object.values(gsiState.players).filter(
-    (player) => player?.name
-  );
-  players.sort((a, b) => {
-    const slotA = a?.observer_slot ?? 99;
-    const slotB = b?.observer_slot ?? 99;
-    if (slotA !== slotB) {
-      return slotA - slotB;
-    }
-    return a.name.localeCompare(b.name);
-  });
+  const teamMap = new Map();
 
-  for (const player of players) {
-    const teamKey = (player.team || "unknown").toUpperCase();
-    if (!teams[teamKey]) {
-      teams[teamKey] = [];
+  const ensureTeam = (id) => {
+    const normalized = (id || "UNKNOWN").toUpperCase();
+    if (!teamMap.has(normalized)) {
+      const hintName = hints[normalized] || normalized;
+      teamMap.set(normalized, {
+        id: normalized,
+        name: hintName || normalized,
+        players: [],
+        logo: null,
+        altLogo: null,
+        colors: null,
+      });
     }
-    teams[teamKey].push(player.name);
+    return teamMap.get(normalized);
+  };
+
+  for (const key of Object.keys(source)) {
+    const entry = source[key] || {};
+    const teamIdRaw = typeof entry.team === "string" && entry.team.trim() ? entry.team.trim() : "UNKNOWN";
+  const teamBucket = ensureTeam(teamIdRaw);
+
+    const playerId = typeof entry.steamid === "string" && entry.steamid.trim() ? entry.steamid.trim() : String(key);
+    const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : playerId;
+    const observerSlotRaw = entry.observer_slot ?? entry.observer_slot_raw ?? null;
+    const observerSlot = Number.isFinite(Number(observerSlotRaw)) ? Number(observerSlotRaw) : null;
+
+    teamBucket.players.push({
+      id: playerId,
+      name,
+      observer_slot: observerSlot,
+    });
   }
 
-  res.json({
-    teams,
-    teamNames: {
-      CT: gsiState.teamNames.CT,
-      T: gsiState.teamNames.T,
-    },
+  // ensure hints captured even without players
+  for (const key of Object.keys(hints)) {
+    if (!hints[key]) {
+      continue;
+    }
+  ensureTeam(key);
+  const existing = teamMap.get(key);
+    if (existing) {
+      existing.name = hints[key];
+    }
+  }
+
+  const teams = Array.from(teamMap.values()).map((team) => {
+    team.players.sort((a, b) => {
+      const slotA = Number.isFinite(a.observer_slot) ? a.observer_slot : 999;
+      const slotB = Number.isFinite(b.observer_slot) ? b.observer_slot : 999;
+      if (slotA !== slotB) {
+        return slotA - slotB;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    return team;
   });
+
+  res.json({ teams });
 });
 
 app.get("/admin-panel", requireAdminAccess, (_req, res) => {

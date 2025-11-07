@@ -1,3 +1,3 @@
-// Updated for TURN server integration
-export const API_BASE = "https://turn.raptors.life";
-export const WS_BASE = "wss://turn.raptors.life";
+export const API_BASE = window.location.origin.replace(/\/$/, "");
+export const WS_BASE = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+export const LOGO_DB_PROXY = API_BASE + "/assets/team-logos.json";

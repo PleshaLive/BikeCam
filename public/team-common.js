@@ -1,5 +1,41 @@
-// Updated for TURN server integration
+import { API_BASE, LOGO_DB_PROXY } from "./js/endpoints.js";
 import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support.js";
+
+const TEAMS_ENDPOINT = `${API_BASE}/teams`;
+const LOGO_JSON = LOGO_DB_PROXY;
+
+async function loadJson(url) {
+	const response = await fetch(url, { cache: "no-store" });
+	if (!response.ok) {
+		throw new Error(`Fetch failed: ${url} -> ${response.status}`);
+	}
+	return response.json();
+}
+
+const normKey = (team) => {
+	const value = (team?.id ?? team?.name ?? "").toString().trim().toLowerCase();
+	return value;
+};
+
+export async function loadTeamsWithLogos() {
+	const [live, logos] = await Promise.all([
+		loadJson(TEAMS_ENDPOINT),
+		loadJson(LOGO_JSON),
+	]);
+
+	const logoMap = new Map((logos?.teams ?? []).map((team) => [normKey(team), team]));
+	const mergedTeams = (live?.teams ?? []).map((team) => {
+		const match = logoMap.get(normKey(team)) || {};
+		return {
+			...team,
+			logo: match.logo || match.badge || match.image || null,
+			altLogo: match.altLogo || null,
+			colors: match.colors || null,
+		};
+	});
+
+	return { teams: mergedTeams };
+}
 
 (async () => {
 	const TEAM_TITLES = {
@@ -102,7 +138,6 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 		const fallbackTimers = new Map();
 		const forcedFallbackOverrides = new Set();
 	const MAX_PLAYERS = 5;
-	const SCOREBOARD_ENDPOINT = "https://waywayway-production.up.railway.app/teams";
 
 	let ws = null;
 	let wsReady = false;
@@ -384,19 +419,43 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 		slot.card.remove();
 	}
 
-		function renderPlayers(names) {
-				const prepared = [];
-				const seen = new Set();
-			for (const value of names) {
-				const normalized = normalizeNickname(value);
+		function renderPlayers(players) {
+			const roster = Array.isArray(players) ? [...players] : [];
+			const prepared = [];
+			const seen = new Set();
+
+			roster.sort((a, b) => {
+				const slotA = Number.isFinite(Number(a?.observer_slot)) ? Number(a.observer_slot) : 999;
+				const slotB = Number.isFinite(Number(b?.observer_slot)) ? Number(b.observer_slot) : 999;
+				if (slotA !== slotB) {
+					return slotA - slotB;
+				}
+				const nameA = normalizeNickname(typeof a?.name === "string" ? a.name : a?.id);
+				const nameB = normalizeNickname(typeof b?.name === "string" ? b.name : b?.id);
+				if (!nameA && !nameB) {
+					return 0;
+				}
+				if (!nameA) {
+					return 1;
+				}
+				if (!nameB) {
+					return -1;
+				}
+				return nameA.localeCompare(nameB);
+			});
+
+			for (const entry of roster) {
+				const nameValue = typeof entry?.name === "string" && entry.name.trim() ? entry.name.trim() : (typeof entry?.id === "string" ? entry.id : "");
+				const normalized = normalizeNickname(nameValue);
 				if (!normalized) {
 					continue;
 				}
-					if (seen.has(normalized)) {
-						continue;
-					}
-					seen.add(normalized);
-				prepared.push({ normalized, display: value });
+				const dedupeKey = normalized.toLowerCase();
+				if (seen.has(dedupeKey)) {
+					continue;
+				}
+				seen.add(dedupeKey);
+				prepared.push({ normalized, display: nameValue || normalized });
 				if (prepared.length === MAX_PLAYERS) {
 					break;
 				}
@@ -434,7 +493,7 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 			}
 
 			syncSessions();
-	}
+		}
 
 	function setSlotStream(nickname, stream) {
 			const slot = slots.get(nickname);
@@ -865,66 +924,30 @@ import { getConfig, hasWebRTCSupport, createMjpegUrl } from "./js/webrtc-support
 		});
 	}
 
-	async function fetchScoreboardMeta() {
-		try {
-			const response = await fetch(SCOREBOARD_ENDPOINT, { cache: "no-store" });
-			if (!response.ok) {
-				throw new Error(`Scoreboard request failed: ${response.status}`);
-			}
-
-			const data = await response.json();
-			const teams = Array.isArray(data?.teams) ? data.teams : [];
-			for (const entry of teams) {
-				if (!entry || typeof entry !== "object") {
-					continue;
-				}
-
-				const entryKey = typeof entry.team === "string" ? entry.team.toUpperCase() : "";
-				if (entryKey !== teamKey) {
-					continue;
-				}
-
-				const details = {
-					teamName: typeof entry.teamName === "string" ? entry.teamName.trim() : "",
-					logo: typeof entry.logo === "string" ? entry.logo.trim() : "",
-				};
-				return details;
-			}
-		} catch (error) {
-			return null;
-		}
-
-		return null;
-	}
-
 	async function fetchTeams() {
-		const scoreboardPromise = fetchScoreboardMeta().catch(() => null);
 		try {
-			const response = await fetch(`${window.API_BASE}/teams`, {
-				cache: "no-store",
-				credentials: "include",
+			const { teams } = await loadTeamsWithLogos();
+			const rosterList = Array.isArray(teams) ? teams : [];
+			const target = rosterList.find((entry) => {
+				const key = (entry?.id ?? entry?.name ?? "").toString().trim().toUpperCase();
+				return key === teamKey;
 			});
-			if (!response.ok) {
-				throw new Error(`Request failed: ${response.status}`);
-			}
-			const data = await response.json();
-			const teamPlayers = Array.isArray(data?.teams?.[teamKey]) ? data.teams[teamKey] : [];
-					if (data?.teamNames && typeof data.teamNames[teamKey] === "string") {
-						applyTeamTitle(data.teamNames[teamKey]);
-					}
 
-					renderPlayers(teamPlayers);
-			ensureStatus(teamPlayers.length ? "" : "Team roster is not available yet.");
+			const players = Array.isArray(target?.players) ? target.players : [];
+			if (typeof target?.name === "string" && target.name.trim()) {
+				applyTeamTitle(target.name.trim());
+			}
+
+			const logoUrl = typeof target?.logo === "string" && target.logo.trim() ? target.logo.trim() :
+				typeof target?.altLogo === "string" && target.altLogo.trim() ? target.altLogo.trim() : "";
+			applyTeamLogo(logoUrl);
+
+			renderPlayers(players);
+			ensureStatus(players.length ? "" : "Team roster is not available yet.");
 		} catch (error) {
+			console.error("Failed to load teams with logos", error);
 			ensureStatus("Failed to fetch team roster.");
-		}
-
-		const scoreboardMeta = await scoreboardPromise;
-		if (scoreboardMeta) {
-			if (scoreboardMeta.teamName) {
-				applyTeamTitle(scoreboardMeta.teamName);
-			}
-			applyTeamLogo(scoreboardMeta.logo);
+			applyTeamLogo("");
 		}
 	}
 

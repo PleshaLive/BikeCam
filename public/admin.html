@@ -291,10 +291,11 @@
   </main>
 
   <script type="module">
-    import { API_BASE, WS_BASE } from "./js/endpoints.js";
+    import { API_BASE, WS_BASE, LOGO_DB_PROXY } from "./js/endpoints.js";
     window.API_BASE = API_BASE;
     window.WS_BASE = WS_BASE;
-    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE);
+    window.LOGO_DB_PROXY = LOGO_DB_PROXY;
+    console.log("[BOOT] API_BASE=", API_BASE, "WS_BASE=", WS_BASE, "LOGO_DB_PROXY=", LOGO_DB_PROXY);
   </script>
 
   <script type="module">
