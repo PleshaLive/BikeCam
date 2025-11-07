@@ -1,0 +1,514 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Broadcast Admin Console</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111324;
+      --panel: #191c33;
+      --panel-alt: #202441;
+      --primary: #6d8bff;
+      --danger: #ff6b6b;
+      --text: #f5f7ff;
+      --muted: rgba(245, 247, 255, 0.65);
+      --border: rgba(255, 255, 255, 0.08);
+      --success: #5bd997;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-size: 1.8rem;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    nav a {
+      text-decoration: none;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.9rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: background 0.2s ease;
+    }
+
+    nav a:hover {
+      background: var(--panel-alt);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 6px;
+      text-align: left;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    label {
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    input, button {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    input:focus {
+      outline: 2px solid var(--primary);
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: linear-gradient(135deg, var(--primary), #3752c7);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    button.danger {
+      background: linear-gradient(135deg, var(--danger), #cc5454);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .status-board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .status-card {
+      background: var(--panel-alt);
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .status-card span {
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .status-card strong {
+      font-size: 1.1rem;
+    }
+
+    #messageBox {
+      min-height: 22px;
+      font-size: 0.88rem;
+      color: var(--success);
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 16px;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Broadcast Control Center</h1>
+    <div id="messageBox"></div>
+    <nav id="navLinks"></nav>
+  </header>
+
+  <main>
+    <section>
+      <h2>Live Status</h2>
+      <div class="status-board">
+        <div class="status-card">
+          <span>Current Focus</span>
+          <strong id="focusName">ΓÇö</strong>
+        </div>
+        <div class="status-card">
+          <span>Active Cameras</span>
+          <strong id="cameraCount">0</strong>
+        </div>
+        <div class="status-card">
+          <span>Last Sync</span>
+          <strong id="updatedAt">ΓÇö</strong>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Allowed Admin IPs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>IP Address</th>
+            <th>Label</th>
+            <th>Added</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ipTableBody"></tbody>
+      </table>
+
+      <form id="addIpForm">
+        <label for="ipInput">Add new admin IP</label>
+        <input id="ipInput" name="ip" type="text" placeholder="e.g. 203.0.113.5" required>
+        <label for="labelInput">Label (optional)</label>
+        <input id="labelInput" name="label" type="text" placeholder="Who is this for?">
+        <button type="submit">Add IP</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Active Cameras</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Nickname</th>
+            <th>Viewers</th>
+            <th>Connections</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="cameraTableBody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const DASHBOARD_ENDPOINT = "/api/admin/dashboard";
+    const ADD_IP_ENDPOINT = "/api/admin/allowed-ips";
+    const KICK_ENDPOINT = "/api/admin/kick";
+    let ownerIp = "";
+
+    function setMessage(message, isError = false) {
+      const box = document.getElementById("messageBox");
+      box.textContent = message || "";
+      box.classList.toggle("error", Boolean(isError));
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) {
+        return "ΓÇö";
+      }
+      try {
+        const date = new Date(isoString);
+        if (Number.isNaN(date.getTime())) {
+          return isoString;
+        }
+        return date.toLocaleString();
+      } catch (error) {
+        return isoString;
+      }
+    }
+
+    function renderNav(links) {
+      const nav = document.getElementById("navLinks");
+      nav.innerHTML = "";
+      links.forEach((link) => {
+        const anchor = document.createElement("a");
+        anchor.href = link.href;
+        anchor.textContent = link.label;
+        anchor.target = "_blank";
+        anchor.rel = "noreferrer";
+        nav.appendChild(anchor);
+      });
+    }
+
+    function renderIps(items) {
+      const tbody = document.getElementById("ipTableBody");
+      tbody.innerHTML = "";
+
+      if (!items.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.textContent = "No IPs yet";
+        cell.style.color = "var(--muted)";
+        row.appendChild(cell);
+        tbody.appendChild(row);
+        return;
+      }
+
+      items.forEach((entry) => {
+        const row = document.createElement("tr");
+
+        const ipCell = document.createElement("td");
+        ipCell.textContent = entry.ip;
+        row.appendChild(ipCell);
+
+        const labelCell = document.createElement("td");
+        labelCell.textContent = entry.label || "ΓÇö";
+        row.appendChild(labelCell);
+
+        const dateCell = document.createElement("td");
+        dateCell.textContent = formatDate(entry.addedAt);
+        row.appendChild(dateCell);
+
+        const actionCell = document.createElement("td");
+        if (entry.ip !== ownerIp) {
+          const removeBtn = document.createElement("button");
+          removeBtn.className = "danger";
+          removeBtn.type = "button";
+          removeBtn.textContent = "Remove";
+          removeBtn.addEventListener("click", () => handleRemoveIp(entry.ip));
+          actionCell.appendChild(removeBtn);
+        } else {
+          const badge = document.createElement("span");
+          badge.className = "tag";
+          badge.textContent = "Primary";
+          actionCell.appendChild(badge);
+        }
+        row.appendChild(actionCell);
+
+        tbody.appendChild(row);
+      });
+    }
+
+    function renderPublishers(items) {
+      const tbody = document.getElementById("cameraTableBody");
+      tbody.innerHTML = "";
+
+      if (!items.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.textContent = "No active cameras";
+        cell.style.color = "var(--muted)";
+        row.appendChild(cell);
+        tbody.appendChild(row);
+        document.getElementById("cameraCount").textContent = "0";
+        return;
+      }
+
+      document.getElementById("cameraCount").textContent = items.length.toString();
+
+      items.forEach((entry) => {
+        const row = document.createElement("tr");
+
+        const nameCell = document.createElement("td");
+        nameCell.textContent = entry.nickname;
+        row.appendChild(nameCell);
+
+        const viewersCell = document.createElement("td");
+        viewersCell.textContent = entry.uniqueViewers.toString();
+        row.appendChild(viewersCell);
+
+        const connectionsCell = document.createElement("td");
+        connectionsCell.textContent = entry.connections.toString();
+        row.appendChild(connectionsCell);
+
+        const actionCell = document.createElement("td");
+        const kickBtn = document.createElement("button");
+        kickBtn.className = "danger";
+        kickBtn.type = "button";
+        kickBtn.textContent = "Kick";
+        kickBtn.addEventListener("click", () => handleKick(entry.nickname));
+        actionCell.appendChild(kickBtn);
+        row.appendChild(actionCell);
+
+        tbody.appendChild(row);
+      });
+    }
+
+    async function handleRemoveIp(ip) {
+      if (!window.confirm(`Remove ${ip} from the allowlist?`)) {
+        return;
+      }
+      try {
+        const response = await fetch(`${ADD_IP_ENDPOINT}/${encodeURIComponent(ip)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to remove IP");
+        }
+        setMessage(`Removed ${ip} from the allowlist.`);
+        await loadDashboard();
+      } catch (error) {
+        setMessage(error.message || "Failed to remove IP", true);
+      }
+    }
+
+    async function handleKick(nickname) {
+      if (!window.confirm(`Kick camera for ${nickname}?`)) {
+        return;
+      }
+      try {
+        const response = await fetch(KICK_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to kick camera");
+        }
+        setMessage(`Camera ${nickname} disconnected.`);
+        await loadDashboard();
+      } catch (error) {
+        setMessage(error.message || "Failed to kick camera", true);
+      }
+    }
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch(DASHBOARD_ENDPOINT, { cache: "no-store" });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Failed to load dashboard");
+        }
+
+        const data = await response.json();
+        ownerIp = data.ownerIp;
+        document.getElementById("focusName").textContent = data.currentFocus || "ΓÇö";
+        document.getElementById("updatedAt").textContent = formatDate(data.updatedAt);
+        renderNav(Array.isArray(data.siteLinks) ? data.siteLinks : []);
+        renderIps(Array.isArray(data.allowedIps) ? data.allowedIps : []);
+        renderPublishers(Array.isArray(data.publishers) ? data.publishers : []);
+      } catch (error) {
+        setMessage(error.message || "Dashboard connection failed", true);
+      }
+    }
+
+    document.getElementById("addIpForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const ip = event.target.ip.value.trim();
+      const label = event.target.label.value.trim();
+      if (!ip) {
+        setMessage("Enter an IPv4 address", true);
+        return;
+      }
+      try {
+        const response = await fetch(ADD_IP_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ip, label }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to add IP");
+        }
+        event.target.reset();
+        setMessage(`Added ${ip} to the allowlist.`);
+        await loadDashboard();
+      } catch (error) {
+        setMessage(error.message || "Failed to add IP", true);
+      }
+    });
+
+    loadDashboard();
+    setInterval(loadDashboard, 5000);
+  </script>
+</body>
+</html>
