@@ -1,6 +1,10 @@
 // Updated for TURN server integration
 import { API_BASE } from "./endpoints.js";
 
+const REMOTE_CONFIG_ENDPOINT = `${API_BASE}/api/webrtc/config`;
+const FETCH_RETRY_ATTEMPTS = 3;
+const FETCH_RETRY_DELAY_MS = 300;
+
 const STATIC_CONFIG = {
   iceServers: [
     {
@@ -55,23 +59,6 @@ function applyConfigOverrides(base, overrides) {
   return result;
 }
 
-async function fetchRemoteConfig() {
-  try {
-    const response = await fetch(`${API_BASE}/api/webrtc/config`, {
-      cache: "no-store",
-      credentials: "include",
-    });
-    if (!response.ok) {
-      return applyConfigOverrides(STATIC_CONFIG, null);
-    }
-
-    const data = await response.json();
-    return applyConfigOverrides(STATIC_CONFIG, data);
-  } catch (error) {
-    return applyConfigOverrides(STATIC_CONFIG, null);
-  }
-}
-
 function cloneConfig(config) {
   return {
     iceServers: cloneIceServers(config.iceServers),
@@ -79,21 +66,59 @@ function cloneConfig(config) {
   };
 }
 
-export async function getConfig() {
-  if (!cachedConfig) {
-    cachedConfig = applyConfigOverrides(STATIC_CONFIG, null);
-    if (!fetchPromise) {
-      fetchPromise = fetchRemoteConfig()
-        .then((config) => {
-          cachedConfig = config;
-          return config;
-        })
-        .catch(() => cachedConfig);
-    }
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
-    await fetchPromise;
+async function fetchRemoteConfig() {
+  for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(REMOTE_CONFIG_ENDPOINT, {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        console.warn("[ICE] fallback to static", error?.message);
+        if (attempt < FETCH_RETRY_ATTEMPTS) {
+          await delay(FETCH_RETRY_DELAY_MS);
+          continue;
+        }
+        return null;
+      }
+
+      return response.json();
+    } catch (error) {
+      console.warn("[ICE] fallback to static", error?.message);
+      if (attempt < FETCH_RETRY_ATTEMPTS) {
+        await delay(FETCH_RETRY_DELAY_MS);
+        continue;
+      }
+      return null;
+    }
   }
 
+  return null;
+}
+
+export async function getConfig() {
+  if (!cachedConfig) {
+    cachedConfig = cloneConfig(STATIC_CONFIG);
+  }
+
+  if (!fetchPromise) {
+    fetchPromise = fetchRemoteConfig().then((remoteConfig) => {
+      if (remoteConfig) {
+        cachedConfig = applyConfigOverrides(STATIC_CONFIG, remoteConfig);
+      }
+      return cachedConfig;
+    });
+  }
+
+  await fetchPromise;
   return cloneConfig(cachedConfig);
 }
 
