@@ -640,6 +640,7 @@ const ADMIN_PATHS = [
   "/admin.html",
   "/admin-pro.html",
   "/admin-v2.html",
+  "/_webrtc",
   "/head_admin.html",
   "/admin",
   "/admin-panel",
@@ -689,6 +690,14 @@ app.get("/admin-pro.html", (req, res, next) => {
 
 app.get("/admin-v2.html", (req, res, next) => {
   res.sendFile(path.join(__dirname, "private", "admin-v2.html"), (error) => {
+    if (error) {
+      next(error);
+    }
+  });
+});
+
+app.get("/_webrtc", (req, res, next) => {
+  res.sendFile(path.join(PUBLIC_DIR, "_webrtc.html"), (error) => {
     if (error) {
       next(error);
     }

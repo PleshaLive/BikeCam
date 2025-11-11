@@ -779,6 +779,11 @@ export async function loadTeamsWithLogos() {
 			if (!event.candidate) {
 				return;
 			}
+			const candidate = event.candidate.candidate || "";
+			if (FORCE_RELAY && candidate && !/\btyp relay\b/i.test(candidate)) {
+				console.warn("[ICE] dropping non-relay candidate", candidate);
+				return;
+			}
 			sendSignal({
 				type: "VIEWER_ICE",
 				nickname,
@@ -883,6 +888,13 @@ export async function loadTeamsWithLogos() {
 		}
 
 		try {
+			if (payload.candidate && payload.candidate.candidate && FORCE_RELAY) {
+				const candidateStr = payload.candidate.candidate;
+				if (!/\btyp relay\b/i.test(candidateStr)) {
+					console.warn("[ICE] dropping remote non-relay candidate", nickname, candidateStr);
+					return;
+				}
+			}
 			await session.pc.addIceCandidate(payload.candidate || null);
 		} catch (error) {
 			console.error("ICE candidate error", nickname, error);

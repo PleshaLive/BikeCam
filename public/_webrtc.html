@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC Diagnostics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080910;
+      --panel: rgba(16, 18, 28, 0.94);
+      --border: rgba(255, 255, 255, 0.12);
+      --accent: #f8ff13;
+      --warn: #ffc857;
+      --danger: #ff5c6b;
+      --success: #64f9b6;
+      --muted: rgba(245, 246, 255, 0.78);
+      --scroll: rgba(255, 255, 255, 0.14);
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: #f6f6fc;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(8, 9, 18, 0.92);
+      border-bottom: 1px solid var(--border);
+      padding: 12px clamp(12px, 3vw, 24px);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+
+    header .actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    button, input, select {
+      font-family: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(248, 255, 19, 0.12);
+      color: inherit;
+      padding: 8px 12px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+    }
+
+    button:hover {
+      border-color: rgba(248, 255, 19, 0.42);
+      background: rgba(248, 255, 19, 0.18);
+    }
+
+    label.inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    main {
+      display: grid;
+      gap: 18px;
+      padding: clamp(14px, 3vw, 24px);
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    section h2 {
+      margin: 0;
+      font-size: 0.88rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    pre {
+      background: rgba(0, 0, 0, 0.28);
+      border-radius: 12px;
+      padding: 12px;
+      margin: 0;
+      font-family: "Fira Code", monospace;
+      font-size: 0.75rem;
+      overflow: auto;
+      max-height: 220px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.74rem;
+    }
+
+    th, td {
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    thead {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .log-container {
+      max-height: 48vh;
+      overflow: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(0, 0, 0, 0.24);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      font-family: "Fira Code", monospace;
+      font-size: 0.72rem;
+    }
+
+    .log-entry {
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.14);
+      padding-bottom: 6px;
+    }
+
+    .log-entry:last-child {
+      border-bottom: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .badge.relay {
+      background: rgba(100, 249, 182, 0.18);
+      color: var(--success);
+    }
+
+    .badge.srflx {
+      background: rgba(255, 200, 87, 0.2);
+      color: var(--warn);
+    }
+
+    .badge.host {
+      background: rgba(255, 255, 255, 0.16);
+      color: #f4f4f4;
+    }
+
+    .badge.prflx {
+      background: rgba(128, 196, 255, 0.22);
+      color: #82caff;
+    }
+
+    .badge.dropped {
+      background: rgba(255, 92, 107, 0.18);
+      color: var(--danger);
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    input[type="text"] {
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 6px 10px;
+      color: inherit;
+      font-size: 0.75rem;
+    }
+
+    .warn-text {
+      color: var(--warn);
+      font-size: 0.8rem;
+    }
+
+    .error-text {
+      color: var(--danger);
+      font-size: 0.8rem;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--scroll);
+      border-radius: 999px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WebRTC Diagnostics</h1>
+    <div class="actions">
+      <button id="reconnectBtn">Reconnect</button>
+      <button id="clearLogBtn">Clear Log</button>
+      <button id="sendLogBtn">Send Log</button>
+      <button id="reloadBtn">Disable Cache & Reload</button>
+      <label class="inline"><input type="checkbox" id="turnOnlyToggle"> TURN only</label>
+      <label class="inline"><input type="checkbox" id="tcpOnlyToggle"> TCP only</label>
+      <label class="inline"><input type="checkbox" id="followToggle" checked> Follow log</label>
+    </div>
+  </header>
+
+  <main>
+    <section id="accessGate">
+      <h2>Restricted</h2>
+      <p class="muted">Provide ?key=YOUR_TOKEN in the URL to unlock diagnostics.</p>
+    </section>
+
+    <section id="statePanel" class="hidden">
+      <h2>ICE / DTLS States</h2>
+      <pre id="stateDetails">{}</pre>
+      <h2>Selected Candidate Pair</h2>
+      <pre id="pairDetails">{}</pre>
+      <h2>Bitrate / RTT</h2>
+      <pre id="statsDetails">{}</pre>
+    </section>
+
+    <section id="serversPanel" class="hidden">
+      <h2>ICE Servers</h2>
+      <pre id="serversDetails">[]</pre>
+      <p class="muted">Expect relay candidates only. If host/srflx appear, configuration is leaking STUN.</p>
+    </section>
+
+    <section id="candidatesPanel" class="hidden">
+      <h2>Discovered Candidates</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Dir</th>
+            <th>Type</th>
+            <th>Protocol</th>
+            <th>IP:Port</th>
+            <th>Foundation</th>
+            <th>Related</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody id="candidateRows"></tbody>
+      </table>
+    </section>
+
+    <section id="logPanel" class="hidden" style="grid-column: 1 / -1;">
+      <h2>Event Log</h2>
+      <div class="filter-row">
+        <input type="text" id="scopeFilter" placeholder="Scope">
+        <input type="text" id="eventFilter" placeholder="Event">
+        <input type="text" id="textFilter" placeholder="Search text">
+      </div>
+      <div class="log-container" id="logContainer"></div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/webrtc-diag-page.js"></script>
+</body>
+</html>

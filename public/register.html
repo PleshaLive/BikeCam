@@ -848,6 +848,11 @@
               if (!event.candidate) {
                 return;
               }
+              const candidate = event.candidate.candidate || "";
+              if (FORCE_RELAY && candidate && !/\btyp relay\b/i.test(candidate)) {
+                console.warn("[ICE] dropping non-relay candidate", candidate);
+                return;
+              }
               sendSignal({
                 type: "PUBLISHER_ICE",
                 viewerSocketId,
@@ -911,6 +916,13 @@
             }
 
             try {
+              if (candidate && candidate.candidate && FORCE_RELAY) {
+                const candidateStr = candidate.candidate;
+                if (!/\btyp relay\b/i.test(candidateStr)) {
+                  console.warn("[ICE] dropping remote non-relay candidate", candidateStr);
+                  return;
+                }
+              }
               await session.pc.addIceCandidate(candidate || null);
             } catch (error) {
               console.error("Failed to apply ICE candidate", error);
