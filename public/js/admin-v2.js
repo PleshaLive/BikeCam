@@ -15,7 +15,7 @@ const MAX_DEBUG_ENTRIES = 120;
 const state = {
   forceTurnOnly: true,
   globalMaxBitrate: 1_200,
-  globalMute: false,
+  globalMute: true,
   globalPaused: false,
   sessions: new Map(),
   knownPublishers: new Map(),
@@ -538,6 +538,7 @@ async function startSession(session, reason) {
   }
 
   session.pc = session.connection.pc;
+  ensureRecvTransceivers(session.pc);
   applyMaxBitrate(session).catch(() => {});
 
   session.pc.addEventListener("icecandidate", (event) => {
@@ -600,10 +601,8 @@ async function startSession(session, reason) {
     session.stream = stream;
     if (session.dom?.video) {
       session.dom.video.srcObject = stream;
-      if (!session.audioMuted) {
-        session.dom.video.muted = false;
-        session.dom.video.play().catch(() => {});
-      }
+      session.dom.video.muted = session.audioMuted;
+      session.dom.video.play().catch(() => {});
     }
     applyMuteStateToStream(session);
     applyPauseStateToStream(session);
@@ -613,6 +612,31 @@ async function startSession(session, reason) {
   startStatsLoop(session);
   await createAndSendOffer(session, reason);
   session.connecting = false;
+}
+
+function ensureRecvTransceivers(pc) {
+  if (!pc || typeof pc.addTransceiver !== "function") {
+    return;
+  }
+  try {
+    const existingKinds = new Set();
+    pc.getTransceivers().forEach((transceiver) => {
+      if (transceiver?.receiver?.track?.kind) {
+        existingKinds.add(transceiver.receiver.track.kind);
+      }
+      if (transceiver?.sender?.track?.kind) {
+        existingKinds.add(transceiver.sender.track.kind);
+      }
+    });
+    if (!existingKinds.has("video")) {
+      pc.addTransceiver("video", { direction: "recvonly" });
+    }
+    if (!existingKinds.has("audio")) {
+      pc.addTransceiver("audio", { direction: "recvonly" });
+    }
+  } catch (error) {
+    console.warn("[admin-v2] failed to add transceivers", error);
+  }
 }
 
 async function createAndSendOffer(session, reason) {
@@ -1013,10 +1037,11 @@ function applyMuteStateToStream(session) {
     track.enabled = !session.audioMuted;
   });
   if (session.dom?.video) {
-    session.dom.video.muted = session.audioMuted;
+    session.dom.video.muted = true;
     if (!session.audioMuted) {
-      session.dom.video.play().catch(() => {});
+      session.dom.video.muted = false;
     }
+    session.dom.video.play().catch(() => {});
   }
   if (session.dom?.muteBtn) {
     session.dom.muteBtn.textContent = session.audioMuted ? "Unmute" : "Mute";
