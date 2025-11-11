@@ -12,9 +12,51 @@ async function loadJson(url) {
 	return response.json();
 }
 
+const normalizeKeyValue = (value) => {
+	if (value === undefined || value === null) {
+		return "";
+	}
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		return trimmed ? trimmed.toLowerCase() : "";
+	}
+	return normalizeKeyValue(value.toString());
+};
+
+const collectTeamKeys = (team) => {
+	const keys = [];
+	if (typeof team === "string") {
+		const key = normalizeKeyValue(team);
+		if (key) {
+			keys.push(key);
+		}
+		return keys;
+	}
+	if (!team || typeof team !== "object") {
+		return keys;
+	}
+
+	[
+		team.id,
+		team.team,
+		team.code,
+		team.slug,
+		team.tag,
+		team.name,
+		team.teamName,
+	].forEach((candidate) => {
+		const key = normalizeKeyValue(candidate);
+		if (key) {
+			keys.push(key);
+		}
+	});
+
+	return keys;
+};
+
 const normKey = (team) => {
-	const value = (team?.id ?? team?.name ?? "").toString().trim().toLowerCase();
-	return value;
+	const keys = collectTeamKeys(team);
+	return keys.length ? keys[0] : "";
 };
 
 export async function loadTeamsWithLogos() {
@@ -23,14 +65,37 @@ export async function loadTeamsWithLogos() {
 		loadJson(LOGO_JSON),
 	]);
 
-	const logoMap = new Map((logos?.teams ?? []).map((team) => [normKey(team), team]));
+	const logoMap = new Map();
+	(logos?.teams ?? []).forEach((entry) => {
+		collectTeamKeys(entry).forEach((key) => {
+			if (!logoMap.has(key)) {
+				logoMap.set(key, entry);
+			}
+		});
+	});
+
 	const mergedTeams = (live?.teams ?? []).map((team) => {
-		const match = logoMap.get(normKey(team)) || {};
+		let match = null;
+		for (const key of collectTeamKeys(team)) {
+			if (logoMap.has(key)) {
+				match = logoMap.get(key);
+				break;
+			}
+		}
+
+		const matchName = typeof match?.teamName === "string" ? match.teamName.trim() : "";
+		const matchLogo = typeof match?.logo === "string" ? match.logo.trim() : "";
+		const altLogo = typeof match?.altLogo === "string" ? match.altLogo.trim() : "";
+		const mapLogo = typeof match?.mapLogo === "string" ? match.mapLogo.trim() : "";
+		const colors = match?.colors ?? team.colors ?? null;
+
 		return {
 			...team,
-			logo: match.logo || match.badge || match.image || null,
-			altLogo: match.altLogo || null,
-			colors: match.colors || null,
+			name: matchName || team.name,
+			logo: matchLogo || match?.badge || match?.image || team.logo || null,
+			altLogo: altLogo || team.altLogo || null,
+			mapLogo: mapLogo || team.mapLogo || null,
+			colors,
 		};
 	});
 
