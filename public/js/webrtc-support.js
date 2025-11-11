@@ -1,169 +1,554 @@
-// Updated for TURN server integration
 import { API_BASE, DEBUG_WEBRTC } from "./endpoints.js";
+import { computeInboundVideoMetrics } from "./stats.js";
 
 const REMOTE_CONFIG_ENDPOINT = `${API_BASE}/api/webrtc/config`;
 const FETCH_RETRY_ATTEMPTS = 3;
 const FETCH_RETRY_DELAY_MS = 300;
+const KEEPALIVE_INTERVAL_MS = 10_000;
+const STATS_INTERVAL_MS = 15_000;
+const ICE_DISCONNECT_GRACE_MS = 5_000;
+const ICE_RECOVERY_TIMEOUT_MS = 10_000;
+const RECONNECT_BACKOFF = [1_000, 2_000, 5_000, 10_000];
 
 const STATIC_CONFIG = {
-  iceServers: [
-    {
-      urls: ["stun:stun.l.google.com:19302"],
-    },
-  ],
-  fallback: {
-    mjpeg: true,
-    endpoint: `${API_BASE}/fallback/mjpeg`,
-    heartbeatSeconds: 20,
-    maxFps: 5,
-  },
+	iceServers: [
+		{
+			urls: ["stun:stun.l.google.com:19302"],
+		},
+	],
+	fallback: {
+		mjpeg: true,
+		endpoint: `${API_BASE}/fallback/mjpeg`,
+		heartbeatSeconds: 20,
+		maxFps: 5,
+	},
 };
 
-let resolvedConfigPromise = null;
+const configCache = {
+	promise: null,
+	value: null,
+	expiresAt: 0,
+	ttlMs: 0,
+};
+
+const diagStore = createDiagStore();
+
+if (typeof window !== "undefined") {
+	if (!window.__webrtcDiag) {
+		window.__webrtcDiag = {
+			dump: () => ({ events: diagStore.events.slice(), stats: diagStore.stats.slice() }),
+		};
+	} else if (typeof window.__webrtcDiag.dump !== "function") {
+		window.__webrtcDiag.dump = () => ({ events: diagStore.events.slice(), stats: diagStore.stats.slice() });
+	}
+}
+
+function createDiagStore() {
+	return {
+		events: [],
+		stats: [],
+		pushEvent(event) {
+			this.events.push(event);
+			if (this.events.length > 100) {
+				this.events.shift();
+			}
+		},
+		pushStats(sample) {
+			this.stats.push(sample);
+			if (this.stats.length > 100) {
+				this.stats.shift();
+			}
+		},
+	};
+}
+
+function logDiag(type, payload = {}) {
+	const entry = {
+		type,
+		timestamp: Date.now(),
+		...payload,
+	};
+	diagStore.pushEvent(entry);
+	if (DEBUG_WEBRTC) {
+		console.debug(`[webrtc] ${type}`, payload);
+	}
+}
 
 function cloneIceServers(iceServers) {
-  return (iceServers || []).map((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return null;
-    }
-    const cloned = { ...entry };
-    if (Array.isArray(entry.urls)) {
-      cloned.urls = [...entry.urls];
-    }
-    return cloned;
-  }).filter(Boolean);
+	return (iceServers || [])
+		.map((entry) => {
+			if (!entry || typeof entry !== "object") {
+				return null;
+			}
+			const clone = { ...entry };
+			if (Array.isArray(entry.urls)) {
+				clone.urls = [...entry.urls];
+			}
+			return clone;
+		})
+		.filter(Boolean);
 }
 
 function cloneConfig(config) {
-  return {
-    iceServers: cloneIceServers(config.iceServers),
-    fallback: { ...(config.fallback || {}) },
-  };
+	return {
+		iceServers: cloneIceServers(config?.iceServers),
+		fallback: { ...(config?.fallback || {}) },
+		ttlSec: config?.ttlSec || null,
+	};
 }
 
 function mergeConfig(remote) {
-  const base = cloneConfig(STATIC_CONFIG);
-  if (!remote || typeof remote !== "object") {
-    return base;
-  }
+	const base = cloneConfig(STATIC_CONFIG);
+	if (!remote || typeof remote !== "object") {
+		return base;
+	}
 
-  const merged = {
-    iceServers: base.iceServers,
-    fallback: { ...base.fallback },
-  };
+	const merged = {
+		iceServers: base.iceServers,
+		fallback: { ...base.fallback },
+		ttlSec: remote.ttlSec || base.ttlSec || null,
+	};
 
-  if (Array.isArray(remote.iceServers) && remote.iceServers.length) {
-    merged.iceServers = cloneIceServers(remote.iceServers);
-  }
+	if (Array.isArray(remote.iceServers) && remote.iceServers.length) {
+		merged.iceServers = cloneIceServers(remote.iceServers);
+	}
 
-  if (remote.fallback && typeof remote.fallback === "object") {
-    merged.fallback = {
-      ...merged.fallback,
-      ...remote.fallback,
-    };
-  }
+	if (remote.fallback && typeof remote.fallback === "object") {
+		merged.fallback = {
+			...merged.fallback,
+			...remote.fallback,
+		};
+	}
 
-  return merged;
+	return merged;
 }
 
 function delay(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
 }
 
 async function fetchRemoteConfig() {
-  for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await fetch(REMOTE_CONFIG_ENDPOINT, {
-        cache: "no-store",
-        credentials: "include",
-      });
+	for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+		try {
+			const response = await fetch(REMOTE_CONFIG_ENDPOINT, {
+				cache: "no-store",
+				credentials: "include",
+			});
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}`);
+			}
 
-      return response.json();
-    } catch (error) {
-      if (attempt === FETCH_RETRY_ATTEMPTS) {
-        console.warn("[ICE] remote config fetch failed", error);
-        break;
-      }
-      await delay(FETCH_RETRY_DELAY_MS * attempt);
-    }
-  }
+			return response.json();
+		} catch (error) {
+			if (attempt === FETCH_RETRY_ATTEMPTS) {
+				console.warn("[ICE] remote config fetch failed", error);
+				break;
+			}
+			await delay(FETCH_RETRY_DELAY_MS * attempt);
+		}
+	}
 
-  return null;
+	return null;
 }
 
-async function resolveConfig() {
-  if (!resolvedConfigPromise) {
-    resolvedConfigPromise = (async () => {
-      const remote = await fetchRemoteConfig();
-      if (remote) {
-        return mergeConfig(remote);
-      }
-      return cloneConfig(STATIC_CONFIG);
-    })().catch((error) => {
-      console.warn("[ICE] using static fallback", error);
-      return cloneConfig(STATIC_CONFIG);
-    });
-  }
+function applyForceTurn(config, forceTurnOnly) {
+	if (!forceTurnOnly) {
+		return cloneConfig(config);
+	}
 
-  return resolvedConfigPromise;
+	const filtered = cloneConfig(config);
+	filtered.iceServers = filtered.iceServers
+		.map((server) => {
+			if (!server) {
+				return null;
+			}
+
+			const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+			const turnUrls = urls.filter((url) => isTurnUrl(url));
+			if (!turnUrls.length) {
+				return null;
+			}
+
+			const copy = { ...server };
+			copy.urls = turnUrls;
+			return copy;
+		})
+		.filter(Boolean);
+
+	return filtered;
 }
 
-export async function getConfig() {
-  const config = await resolveConfig();
-  return cloneConfig(config);
+function isTurnUrl(url) {
+	return typeof url === "string" && (url.startsWith("turn:") || url.startsWith("turns:"));
+}
+
+async function resolveConfig(forceTurnOnly = false) {
+	const now = Date.now();
+	if (configCache.value && configCache.expiresAt > now) {
+		return applyForceTurn(configCache.value, forceTurnOnly);
+	}
+
+	if (!configCache.promise) {
+		configCache.promise = (async () => {
+			const remote = await fetchRemoteConfig();
+			const merged = remote ? mergeConfig(remote) : cloneConfig(STATIC_CONFIG);
+			const ttlMs = Math.max(30_000, Math.min((remote?.ttlSec || 3600) * 1000, 3_600_000));
+			configCache.value = merged;
+			configCache.ttlMs = ttlMs;
+			configCache.expiresAt = Date.now() + ttlMs * 0.9;
+			return merged;
+		})()
+			.catch((error) => {
+				console.warn("[ICE] using static fallback", error);
+				const fallback = cloneConfig(STATIC_CONFIG);
+				configCache.value = fallback;
+				configCache.ttlMs = 60_000;
+				configCache.expiresAt = Date.now() + 55_000;
+				return fallback;
+			})
+			.finally(() => {
+				configCache.promise = null;
+			});
+	}
+
+	const base = await configCache.promise;
+	return applyForceTurn(base, forceTurnOnly);
+}
+
+export async function getConfig(forceTurnOnly = false) {
+	const config = await resolveConfig(forceTurnOnly);
+	return cloneConfig(config);
 }
 
 export function hasWebRTCSupport() {
-  return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
+	return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
 }
 
-export async function createPeerConnection(forceRelay = false) {
-  const config = await resolveConfig();
-  const options = {
-    iceServers: cloneIceServers(config.iceServers),
-  };
+export async function createConnection(options = {}) {
+	const managed = new ManagedConnection(options);
+	await managed.init();
+	return managed;
+}
 
-  if (forceRelay) {
-    options.iceTransportPolicy = "relay";
-  }
-
-  const pc = new RTCPeerConnection(options);
-
-  if (DEBUG_WEBRTC) {
-    const debugLabel = forceRelay ? "[WebRTC relay]" : "[WebRTC auto]";
-    pc.addEventListener("icecandidate", (event) => {
-      if (event.candidate) {
-        const { candidate } = event;
-        console.debug(
-          `${debugLabel} ICE candidate`,
-          candidate?.type || "unknown",
-          candidate?.protocol || "",
-          candidate?.candidate || ""
-        );
-      } else {
-        console.debug(`${debugLabel} ICE gathering complete`);
-      }
-    });
-
-    pc.addEventListener("connectionstatechange", () => {
-      console.debug(`${debugLabel} connection state`, pc.connectionState);
-    });
-  }
-
-  return pc;
+export async function createPeerConnection(forceRelay = false, options = {}) {
+	const managed = await createConnection({ ...options, forceTurnOnly: forceRelay });
+	return managed.pc;
 }
 
 export function createMjpegUrl(nickname) {
-  if (!nickname) {
-    return "";
-  }
+	if (!nickname) {
+		return "";
+	}
 
-  const safeName = encodeURIComponent(nickname);
-  return `${API_BASE}/fallback/mjpeg/${safeName}?t=${Date.now()}`;
+	const safeName = encodeURIComponent(nickname);
+	return `${API_BASE}/fallback/mjpeg/${safeName}?t=${Date.now()}`;
 }
+
+class ManagedConnection {
+	constructor(options) {
+		this.forceTurnOnly = Boolean(options.forceTurnOnly);
+		this.onStats = typeof options.onStats === "function" ? options.onStats : null;
+		this.onStateChange = typeof options.onStateChange === "function" ? options.onStateChange : null;
+		this.onReconnectNeeded = typeof options.onReconnectNeeded === "function" ? options.onReconnectNeeded : null;
+		this.label = options.label || "connection";
+		this.pc = null;
+		this.keepAliveChannel = null;
+		this.keepAliveTimer = null;
+		this.statsTimer = null;
+		this.restartTimer = null;
+		this.recoveryTimer = null;
+		this.reconnectAttempt = 0;
+		this.closed = false;
+	}
+
+	async init() {
+		const config = await resolveConfig(this.forceTurnOnly);
+		const rtcConfig = {
+			iceServers: cloneIceServers(config.iceServers),
+			iceTransportPolicy: this.forceTurnOnly ? "relay" : "all",
+			bundlePolicy: "max-bundle",
+			sdpSemantics: "unified-plan",
+		};
+
+		this.pc = new RTCPeerConnection(rtcConfig);
+		this.pc.__managed = this;
+
+		this.attachEventHandlers();
+		this.setupKeepAlive();
+		this.setupStatsLoop();
+
+		logDiag("pc-created", { label: this.label, forceTurnOnly: this.forceTurnOnly });
+	}
+
+	attachEventHandlers() {
+		if (!this.pc) {
+			return;
+		}
+
+		this.pc.addEventListener("iceconnectionstatechange", () => {
+			const state = this.pc.iceConnectionState;
+			logDiag("ice-state", { label: this.label, state });
+			if (this.onStateChange) {
+				this.onStateChange({ type: "ice", state });
+			}
+			this.handleIceState(state);
+		});
+
+		this.pc.addEventListener("connectionstatechange", () => {
+			const state = this.pc.connectionState;
+			logDiag("pc-state", { label: this.label, state });
+			if (this.onStateChange) {
+				this.onStateChange({ type: "connection", state });
+			}
+			this.handleConnectionState(state);
+		});
+
+		if (DEBUG_WEBRTC) {
+			this.pc.addEventListener("icecandidate", (event) => {
+				if (event.candidate) {
+					console.debug(`[webrtc] candidate ${this.label}`, event.candidate.type, event.candidate.protocol);
+				} else {
+					console.debug(`[webrtc] ice gathering complete ${this.label}`);
+				}
+			});
+		}
+	}
+
+	setupKeepAlive() {
+		if (!this.pc) {
+			return;
+		}
+
+		try {
+			this.keepAliveChannel = this.pc.createDataChannel("keepalive", {
+				ordered: false,
+				maxRetransmits: 0,
+			});
+		} catch (error) {
+			logDiag("keepalive-error", { label: this.label, message: error?.message || String(error) });
+			return;
+		}
+
+		const sendPing = () => {
+			if (!this.keepAliveChannel || this.keepAliveChannel.readyState !== "open") {
+				return;
+			}
+			try {
+				this.keepAliveChannel.send("ping");
+			} catch (error) {
+				logDiag("keepalive-send-error", { label: this.label, message: error?.message || String(error) });
+			}
+		};
+
+		this.keepAliveChannel.addEventListener("open", () => {
+			sendPing();
+			this.keepAliveTimer = setInterval(sendPing, KEEPALIVE_INTERVAL_MS);
+		});
+
+		this.keepAliveChannel.addEventListener("close", () => {
+			if (this.keepAliveTimer) {
+				clearInterval(this.keepAliveTimer);
+				this.keepAliveTimer = null;
+			}
+		});
+
+		this.keepAliveChannel.addEventListener("error", (event) => {
+			logDiag("keepalive-channel-error", { label: this.label, message: event?.message || "error" });
+		});
+	}
+
+	setupStatsLoop() {
+		if (!this.pc || typeof this.pc.getStats !== "function") {
+			return;
+		}
+
+		const pollStats = async () => {
+			if (!this.pc || this.closed) {
+				return;
+			}
+			try {
+				const report = await this.pc.getStats(null);
+				const sample = computeInboundVideoMetrics(report);
+				const payload = { ...sample, label: this.label };
+				diagStore.pushStats(payload);
+				if (this.onStats) {
+					this.onStats(sample, report);
+				}
+			} catch (error) {
+				logDiag("stats-error", { label: this.label, message: error?.message || String(error) });
+			}
+		};
+
+		this.statsTimer = setInterval(pollStats, STATS_INTERVAL_MS);
+		// prime loop quickly
+		pollStats().catch(() => {});
+	}
+
+	handleIceState(state) {
+		if (state === "connected" || state === "completed") {
+			this.resetRecovery();
+			return;
+		}
+
+		if (state === "disconnected") {
+			this.scheduleIceRestart(false);
+		} else if (state === "failed") {
+			this.scheduleIceRestart(true);
+		}
+	}
+
+	handleConnectionState(state) {
+		if (state === "connected") {
+			this.resetRecovery();
+		} else if (state === "failed") {
+			this.scheduleIceRestart(true);
+		}
+	}
+
+	scheduleIceRestart(force) {
+		if (!this.pc || this.closed) {
+			return;
+		}
+
+		if (!this.restartTimer) {
+			this.restartTimer = setTimeout(() => {
+				this.restartTimer = null;
+				this.tryRestart(force);
+			}, ICE_DISCONNECT_GRACE_MS);
+		}
+	}
+
+	tryRestart(force) {
+		if (!this.pc || this.closed) {
+			return;
+		}
+
+		if (typeof this.pc.restartIce === "function") {
+			try {
+				this.pc.restartIce();
+				logDiag("ice-restart", { label: this.label, force });
+			} catch (error) {
+				logDiag("ice-restart-error", { label: this.label, message: error?.message || String(error) });
+				this.requestFullReconnect("restart-error");
+				return;
+			}
+			this.armRecoveryTimer();
+		} else {
+			this.requestFullReconnect("restart-unsupported");
+		}
+	}
+
+	armRecoveryTimer() {
+		if (this.recoveryTimer) {
+			clearTimeout(this.recoveryTimer);
+		}
+		this.recoveryTimer = setTimeout(() => {
+			this.requestFullReconnect("restart-timeout");
+		}, ICE_RECOVERY_TIMEOUT_MS);
+	}
+
+	resetRecovery() {
+		if (this.restartTimer) {
+			clearTimeout(this.restartTimer);
+			this.restartTimer = null;
+		}
+		if (this.recoveryTimer) {
+			clearTimeout(this.recoveryTimer);
+			this.recoveryTimer = null;
+		}
+		this.reconnectAttempt = 0;
+	}
+
+	requestFullReconnect(reason) {
+		if (this.closed) {
+			return;
+		}
+
+		this.reconnectAttempt += 1;
+		const attempt = this.reconnectAttempt;
+		const delay = RECONNECT_BACKOFF[Math.min(attempt - 1, RECONNECT_BACKOFF.length - 1)];
+		logDiag("reconnect-needed", { label: this.label, reason, attempt, delay });
+
+		if (this.onReconnectNeeded) {
+			this.onReconnectNeeded({ reason, attempt, delay, connection: this });
+		}
+	}
+
+	async refreshIceServers(forceTurnOnly) {
+		this.forceTurnOnly = typeof forceTurnOnly === "boolean" ? forceTurnOnly : this.forceTurnOnly;
+		const config = await resolveConfig(this.forceTurnOnly);
+		if (!this.pc) {
+			return;
+		}
+		try {
+			this.pc.setConfiguration({
+				iceServers: cloneIceServers(config.iceServers),
+				iceTransportPolicy: this.forceTurnOnly ? "relay" : "all",
+			});
+			logDiag("pc-config-refreshed", { label: this.label, forceTurnOnly: this.forceTurnOnly });
+		} catch (error) {
+			logDiag("pc-config-error", { label: this.label, message: error?.message || String(error) });
+		}
+	}
+
+	close() {
+		this.destroy();
+	}
+
+	destroy() {
+		if (this.closed) {
+			return;
+		}
+		this.closed = true;
+
+		if (this.keepAliveTimer) {
+			clearInterval(this.keepAliveTimer);
+			this.keepAliveTimer = null;
+		}
+		if (this.statsTimer) {
+			clearInterval(this.statsTimer);
+			this.statsTimer = null;
+		}
+		if (this.restartTimer) {
+			clearTimeout(this.restartTimer);
+			this.restartTimer = null;
+		}
+		if (this.recoveryTimer) {
+			clearTimeout(this.recoveryTimer);
+			this.recoveryTimer = null;
+		}
+
+		if (this.keepAliveChannel) {
+			try {
+				this.keepAliveChannel.close();
+			} catch (error) {
+				// ignore
+			}
+			this.keepAliveChannel = null;
+		}
+
+		if (this.pc) {
+			try {
+				this.pc.close();
+			} catch (error) {
+				// ignore
+			}
+			this.pc = null;
+		}
+
+		logDiag("pc-destroyed", { label: this.label });
+	}
+
+	getDiagnostics() {
+		return {
+			label: this.label,
+			forceTurnOnly: this.forceTurnOnly,
+			reconnectAttempt: this.reconnectAttempt,
+			closed: this.closed,
+		};
+	}
+}
+

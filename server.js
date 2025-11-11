@@ -570,6 +570,43 @@ function collectPublisherStats() {
   return stats;
 }
 
+function collectCameraSessions() {
+  const sessions = [];
+
+  for (const entry of publishers.values()) {
+    let connectionCount = 0;
+    for (const ids of entry.viewers.values()) {
+      connectionCount += ids.size;
+    }
+
+    const effectiveQuality = getEffectiveQualityForKey(entry.key);
+
+    sessions.push({
+      nickname: entry.nickname,
+      key: entry.key,
+      status: entry.status || "ONLINE",
+      connections: connectionCount,
+      uniqueViewers: entry.viewers.size,
+      forcedFallback: forcedFallback.has(entry.key),
+      lastSeen: entry.lastSeen || null,
+      connectedAt: entry.connectedAt || null,
+      qualityProfile: effectiveQuality.profile,
+      qualityParams: effectiveQuality.params,
+      metrics: entry.metrics || null,
+    });
+  }
+
+  sessions.sort((a, b) => a.nickname.localeCompare(b.nickname));
+  return sessions;
+}
+
+function touchPublisher(entry) {
+  if (!entry) {
+    return;
+  }
+  entry.lastSeen = Date.now();
+}
+
 const adminUser = process.env.ADMIN_USER || "admin";
 const adminPass = process.env.ADMIN_PASS || "changeme";
 
@@ -602,10 +639,13 @@ const adminAuthMiddleware = basicAuth({
 const ADMIN_PATHS = [
   "/admin.html",
   "/admin-pro.html",
+  "/head_admin.html",
   "/admin",
   "/admin-panel",
   "/api/admin",
   "/api/admin/*",
+  "/api/gsi/state",
+  "/api/admin/cameras",
   "/logs",
   "/api/logs",
   "/api/logs/*",
@@ -640,6 +680,14 @@ app.get("/admin.html", (req, res, next) => {
 
 app.get("/admin-pro.html", (req, res, next) => {
   res.sendFile(path.join(__dirname, "private", "admin-pro.html"), (error) => {
+    if (error) {
+      next(error);
+    }
+  });
+});
+
+app.get("/head_admin.html", (req, res, next) => {
+  res.sendFile(path.join(__dirname, "head_admin.html"), (error) => {
     if (error) {
       next(error);
     }
@@ -1178,6 +1226,16 @@ app.get("/players", (req, res) => {
   res.json({ players: buildPlayerList() });
 });
 
+app.get("/api/gsi/state", requireAdminAccess, (_req, res) => {
+  res.json({
+    players: buildPlayerList(),
+    currentFocus: gsiState.currentFocus,
+    teamNames: gsiState.teamNames,
+    raw: latestGSI,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
 app.get("/current-focus", (req, res) => {
   res.json({ currentFocus: gsiState.currentFocus });
 });
@@ -1270,7 +1328,7 @@ app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
     publishers: collectPublisherStats(),
     currentFocus: gsiState.currentFocus,
     teamNames: gsiState.teamNames,
-  roster: buildPlayerList(),
+    roster: buildPlayerList(),
     siteLinks: SITE_LINKS,
     ownerIp: OWNER_IP,
     forcedFallback: getForcedFallbackList(),
@@ -1292,6 +1350,14 @@ app.get("/api/admin/dashboard", requireAdminAccess, (_req, res) => {
         })
       ),
     },
+    updatedAt: new Date().toISOString(),
+  });
+});
+
+app.get("/api/admin/cameras", requireAdminAccess, (_req, res) => {
+  res.json({
+    cameras: collectCameraSessions(),
+    forcedFallback: getForcedFallbackList(),
     updatedAt: new Date().toISOString(),
   });
 });
@@ -1389,6 +1455,32 @@ app.post("/api/admin/kick", requireAdminAccess, (req, res) => {
 
   detachPublisher(entry.nickname, entry.socket);
   logEvent("admin", "Publisher kicked", {
+    nickname: entry.nickname,
+    admin: req.adminClientIp,
+  });
+  res.json({ ok: true, nickname: entry.nickname });
+});
+
+app.post("/api/admin/reconnect", requireAdminAccess, (req, res) => {
+  const nicknameRaw = typeof req.body?.nickname === "string" ? req.body.nickname.trim() : "";
+  if (!nicknameRaw) {
+    res.status(400).json({ error: "nickname is required" });
+    return;
+  }
+
+  const { entry } = getPublisherByNickname(nicknameRaw);
+  if (!entry) {
+    res.status(404).json({ error: "No active camera with that nickname" });
+    return;
+  }
+
+  sendJson(entry.socket, {
+    type: "ADMIN_RECONNECT",
+    nickname: entry.nickname,
+  });
+
+  detachPublisher(entry.nickname, entry.socket);
+  logEvent("admin", "Publisher reconnect requested", {
     nickname: entry.nickname,
     admin: req.adminClientIp,
   });
@@ -1781,11 +1873,23 @@ function handleHello(socket, meta, payload) {
 
     let entry = existing;
     if (!entry || entry.socket !== socket) {
-      entry = { socket, viewers: new Map(), nickname, key };
+      entry = {
+        socket,
+        viewers: new Map(),
+        nickname,
+        key,
+        connectedAt: Date.now(),
+        lastSeen: Date.now(),
+        status: "ONLINE",
+        metrics: null,
+      };
       publishers.set(key, entry);
     } else {
       entry.nickname = nickname;
       entry.key = key;
+      entry.connectedAt = entry.connectedAt || Date.now();
+      entry.lastSeen = Date.now();
+      entry.status = "ONLINE";
     }
 
     meta.role = "publisher";
@@ -1840,6 +1944,8 @@ function handleViewerOffer(socket, meta, payload) {
     return;
   }
 
+  touchPublisher(entry);
+
   meta.role = meta.role || "viewer";
   if (!meta.subscriptions.has(connectionId)) {
     meta.subscriptions.set(connectionId, entry.nickname);
@@ -1880,6 +1986,8 @@ function handleViewerIce(meta, payload) {
     return;
   }
 
+  touchPublisher(entry);
+
   sendJson(entry.socket, {
     type: "SIGNAL_VIEWER_CANDIDATE",
     viewerSocketId: meta.id,
@@ -1916,6 +2024,8 @@ function handlePublisherAnswer(socket, meta, payload) {
     return;
   }
 
+  touchPublisher(publishers.get(meta.nicknameKey));
+
   sendJson(viewerSocket, {
     type: "SIGNAL_PUBLISHER_ANSWER",
     nickname: meta.nickname,
@@ -1937,6 +2047,8 @@ function handlePublisherIce(socket, meta, payload) {
     return;
   }
 
+  touchPublisher(publishers.get(meta.nicknameKey));
+
   sendJson(viewerSocket, {
     type: "SIGNAL_PUBLISHER_CANDIDATE",
     nickname: meta.nickname,
@@ -1951,6 +2063,8 @@ function handlePublisherPeerClosed(meta, payload) {
   if (!viewerSocketId || !connectionId) {
     return;
   }
+
+  touchPublisher(publishers.get(meta.nicknameKey));
 
   dropViewerEntry(meta.nickname, viewerSocketId, connectionId);
 

@@ -236,7 +236,19 @@
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
       const fallbackIntervalMs = Math.max(200, Math.round(1000 / Math.max(1, fallbackSettings.maxFps || 5)));
     const params = new URLSearchParams(window.location.search || "");
-    const FORCE_RELAY = params.get("relay") === "1";
+    let forceTurnPreference = false;
+    try {
+      forceTurnPreference = localStorage.getItem("forceTurnOnly") === "true";
+    } catch (error) {
+      forceTurnPreference = false;
+    }
+    const relayParam = params.get("relay");
+    let FORCE_RELAY = relayParam === "1";
+    if (relayParam === "0") {
+      FORCE_RELAY = false;
+    } else if (!FORCE_RELAY && forceTurnPreference) {
+      FORCE_RELAY = true;
+    }
   const wsUrl = window.WS_BASE;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
       const hasWebRTC = hasWebRTCSupport();
@@ -244,6 +256,8 @@
       const peers = new Map();
       const takenNicknames = new Set();
       const senderMonitors = new Map();
+      const PUBLISHER_HEARTBEAT_MS = 45_000;
+      let publisherHeartbeatTimer = null;
 
       const fallbackState = {
         timer: null,
@@ -671,6 +685,31 @@
             updateApplyButtonState();
           }
 
+          function stopPublisherHeartbeat() {
+            if (publisherHeartbeatTimer) {
+              clearInterval(publisherHeartbeatTimer);
+              publisherHeartbeatTimer = null;
+            }
+          }
+
+          function startPublisherHeartbeat() {
+            if (publisherHeartbeatTimer) {
+              return;
+            }
+
+            publisherHeartbeatTimer = setInterval(() => {
+              if (!wsReady || !selectedNickname || selectedNickname !== lastAppliedNickname || !currentStream) {
+                return;
+              }
+
+              if (lastAppliedNickname && takenNicknames.has(lastAppliedNickname)) {
+                return;
+              }
+
+              sendSignal({ type: "HELLO", role: "publisher", nickname: selectedNickname });
+            }, PUBLISHER_HEARTBEAT_MS);
+          }
+
           function sendSignal(payload) {
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(payload));
@@ -686,6 +725,7 @@
               return;
             }
             sendSignal({ type: "HELLO", role: "publisher", nickname: selectedNickname });
+            startPublisherHeartbeat();
           }
 
           function cleanupPeer(key, notifyServer = true) {
@@ -775,9 +815,12 @@
             if (isConnected && lastAppliedNickname && !takenNicknames.has(lastAppliedNickname)) {
               setConnected(false);
               if (selectedNickname === lastAppliedNickname) {
-                status.textContent = "You were disconnected. Apply selection again.";
+                status.textContent = "Connection dropped. Trying to re-register...";
+                ensurePublisherRegistration();
               }
               updateApplyButtonState();
+            } else if (lastAppliedNickname && !takenNicknames.has(lastAppliedNickname) && selectedNickname === lastAppliedNickname) {
+              ensurePublisherRegistration();
             }
           }
 
@@ -919,9 +962,12 @@
                 case "PUBLISHER_REGISTERED": {
                   const nickname = payload.nickname;
                   if (nickname === lastAppliedNickname) {
-                    status.textContent = `Camera ${nickname} is live for viewers.`;
+                    if (!isConnected) {
+                      status.textContent = `Camera ${nickname} is live for viewers.`;
+                    }
                     setConnected(true);
                     updateApplyButtonState();
+                    startPublisherHeartbeat();
                   }
                   if (nickname) {
                     takenNicknames.add(nickname);
@@ -936,6 +982,13 @@
                     updateApplyButtonState();
                   }
                   break;
+                case "ADMIN_RECONNECT":
+                  if (payload.nickname && payload.nickname === lastAppliedNickname) {
+                    status.textContent = "Admin requested reconnect. Re-registering...";
+                    closeAllPeers();
+                    ensurePublisherRegistration();
+                  }
+                  break;
                 default:
                   break;
               }
@@ -945,6 +998,7 @@
               wsReady = false;
               closeAllPeers();
               setConnected(false);
+              stopPublisherHeartbeat();
               status.textContent = "Connection closed. Reconnecting...";
               updateApplyButtonState();
               setTimeout(startWebSocket, 2000);
@@ -962,6 +1016,7 @@
               currentStream = null;
             }
             video.srcObject = null;
+            stopPublisherHeartbeat();
             setConnected(false);
             updateApplyButtonState();
           }

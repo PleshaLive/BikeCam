@@ -193,7 +193,19 @@ export async function loadTeamsWithLogos() {
 
 		const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
 		const params = new URLSearchParams(window.location.search || "");
-		const FORCE_RELAY = params.get("relay") === "1";
+		let storedForceTurn = false;
+		try {
+			storedForceTurn = localStorage.getItem("forceTurnOnly") === "true";
+		} catch (error) {
+			storedForceTurn = false;
+		}
+		const relayParam = params.get("relay");
+		let FORCE_RELAY = relayParam === "1";
+		if (relayParam === "0") {
+			FORCE_RELAY = false;
+		} else if (!FORCE_RELAY && storedForceTurn) {
+			FORCE_RELAY = true;
+		}
 		const preferFallback = params.get("fallback") === "mjpeg";
 		const userAgent = (navigator.userAgent || "").toLowerCase();
 		const forceFallback = preferFallback || userAgent.includes("obs") || userAgent.includes("vmix");
