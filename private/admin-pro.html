@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin PRO Panel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08090c;
+      --panel: rgba(16, 17, 26, 0.9);
+      --panel-strong: rgba(22, 25, 37, 0.92);
+      --border: rgba(248, 255, 19, 0.18);
+      --accent: #f8ff13;
+      --accent-soft: rgba(248, 255, 19, 0.16);
+      --text: #f5f6ff;
+      --muted: rgba(245, 246, 255, 0.65);
+      --danger: #ff5c6b;
+      --success: #64f9b6;
+      --warn: #ffc857;
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --radius-sm: 12px;
+      --shadow-soft: 0 28px 70px rgba(2, 2, 4, 0.6);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: radial-gradient(circle at 12% 18%, rgba(248, 255, 19, 0.12), transparent 68%),
+        radial-gradient(circle at 88% 10%, rgba(100, 249, 182, 0.08), transparent 70%),
+        linear-gradient(150deg, #05060a, var(--bg) 60%, #090a12);
+      color: var(--text);
+      display: grid;
+      grid-template-areas:
+        "header"
+        "layout";
+      gap: 24px;
+      padding: 28px clamp(16px, 3vw, 32px) 40px;
+    }
+
+    header {
+      grid-area: header;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 22px clamp(18px, 3vw, 28px);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, rgba(248, 255, 19, 0.12), rgba(16, 17, 26, 0.92));
+      box-shadow: var(--shadow-soft);
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.6vw, 2rem);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 10px 20px;
+      border-radius: 999px;
+      border: 1px solid rgba(248, 255, 19, 0.28);
+      background: rgba(248, 255, 19, 0.08);
+      color: var(--text);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: transform 0.18s ease, background 0.18s ease, border 0.18s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      background: rgba(248, 255, 19, 0.15);
+      border-color: rgba(248, 255, 19, 0.42);
+    }
+
+    .layout {
+      grid-area: layout;
+      display: grid;
+      grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 18px;
+    }
+
+    .sidebar button {
+      width: 100%;
+      justify-content: flex-start;
+      padding: 12px 18px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.12);
+      background: var(--panel);
+      letter-spacing: 0.1em;
+    }
+
+    .sidebar button.active {
+      border-color: rgba(248, 255, 19, 0.42);
+      background: rgba(248, 255, 19, 0.12);
+    }
+
+    main {
+      display: grid;
+      gap: 24px;
+    }
+
+    .panel {
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(248, 255, 19, 0.18);
+      background: linear-gradient(155deg, rgba(16, 17, 26, 0.94), rgba(12, 14, 20, 0.92));
+      box-shadow: 0 20px 46px rgba(2, 2, 8, 0.55);
+      padding: 22px clamp(18px, 3vw, 28px);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel h2 {
+      margin: 0 0 14px;
+      font-size: 1.1rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: radial-gradient(circle at 12% 18%, rgba(248, 255, 19, 0.12), transparent 62%);
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    .panel > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 680px;
+    }
+
+    thead {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 0.7rem;
+      color: var(--muted);
+      background: rgba(248, 255, 19, 0.08);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: rgba(248, 255, 19, 0.04);
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .status-online {
+      background: rgba(100, 249, 182, 0.18);
+      color: var(--success);
+    }
+
+    .status-webrtc {
+      background: rgba(248, 255, 19, 0.18);
+      color: var(--accent);
+    }
+
+    .status-mjpeg {
+      background: rgba(255, 200, 87, 0.18);
+      color: var(--warn);
+    }
+
+    .status-offline {
+      background: rgba(255, 92, 107, 0.15);
+      color: var(--danger);
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .table-actions button {
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(248, 255, 19, 0.16);
+      background: rgba(248, 255, 19, 0.06);
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .controls {
+      display: inline-flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .filter-group {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .filter-group button {
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(248, 255, 19, 0.18);
+      background: rgba(248, 255, 19, 0.06);
+      font-size: 0.68rem;
+    }
+
+    .filter-group button.active {
+      border-color: rgba(248, 255, 19, 0.42);
+      background: rgba(248, 255, 19, 0.14);
+    }
+
+    .json-preview {
+      max-height: 340px;
+      overflow: auto;
+      font-family: "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.75rem;
+      background: rgba(8, 10, 18, 0.9);
+      padding: 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      white-space: pre;
+    }
+
+    .cards {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.14);
+      background: rgba(12, 14, 22, 0.92);
+      display: grid;
+      gap: 10px;
+    }
+
+    .indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .indicator.online { color: var(--success); }
+    .indicator.warn { color: var(--warn); }
+    .indicator.offline { color: var(--danger); }
+
+    .logs-area {
+      height: 320px;
+      overflow: auto;
+      background: rgba(8, 9, 16, 0.88);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.12);
+      padding: 16px;
+      font-family: "Fira Code", monospace;
+      font-size: 0.75rem;
+      display: grid;
+      gap: 6px;
+    }
+
+    .log-entry {
+      display: grid;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .log-entry.info { border-left: 3px solid var(--accent); }
+    .log-entry.warn { border-left: 3px solid var(--warn); }
+    .log-entry.error { border-left: 3px solid var(--danger); }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid rgba(248, 255, 19, 0.2);
+      border-top-color: rgba(248, 255, 19, 0.85);
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .hidden { display: none !important; }
+
+    .debug-console {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: min(420px, 90vw);
+      max-height: 320px;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.32);
+      background: rgba(8, 9, 16, 0.94);
+      box-shadow: 0 22px 50px rgba(2, 2, 6, 0.6);
+      z-index: 9999;
+    }
+
+    .debug-console header {
+      padding: 12px 18px;
+      background: rgba(248, 255, 19, 0.12);
+      border-bottom: 1px solid rgba(248, 255, 19, 0.22);
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+    }
+
+    .debug-console pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      font-family: "Fira Code", monospace;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .header-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      table {
+        min-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Advanced admin view for CS2 broadcasting stack. Uses existing backend admin APIs. -->
+  <header>
+    <h1>Admin PRO Panel</h1>
+    <div class="header-actions">
+      <button id="btnReload">Reload</button>
+      <button id="btnSettings">Settings</button>
+      <button id="btnLogs">Logs</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <button data-section="cameras" class="active">Active Cameras</button>
+      <button data-section="gsi">GSI Data</button>
+      <button data-section="network">Network / TURN</button>
+      <button data-section="diagnostics">Diagnostics</button>
+    </aside>
+
+    <main>
+      <section id="panel-cameras" class="panel" aria-label="Active camera publishers">
+        <!-- Active camera monitoring via /api/active-cameras -->
+        <div class="section-header">
+          <h2>Active Cameras</h2>
+          <div class="controls">
+            <span id="camerasStatus" class="indicator warn"><span class="spinner"></span> Updating…</span>
+            <button id="btnCamerasRefresh">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Team</th>
+                <th>Slot</th>
+                <th>Status</th>
+                <th>FPS</th>
+                <th>Bitrate</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="camerasTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="panel-gsi" class="panel hidden" aria-label="Game State Integration live data">
+        <!-- GSI live state via /api/gsi/live with filtering and JSON preview -->
+        <div class="section-header">
+          <h2>GSI Data</h2>
+          <div class="controls">
+            <div class="filter-group">
+              <button data-gsi-filter="ALL" class="active">All</button>
+              <button data-gsi-filter="CT">CT</button>
+              <button data-gsi-filter="T">T</button>
+              <button data-gsi-filter="SPECTATOR">Spectators</button>
+            </div>
+            <button id="btnGsiRefresh">Refresh</button>
+          </div>
+        </div>
+        <div class="cards" id="gsiCards"></div>
+        <h3 style="margin: 20px 0 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);">Live JSON</h3>
+        <div id="gsiJson" class="json-preview">{\n  "loading": true\n}</div>
+      </section>
+
+      <section id="panel-network" class="panel hidden" aria-label="TURN and ICE configuration">
+        <!-- WebRTC network configuration fetched from /api/webrtc/config -->
+        <div class="section-header">
+          <h2>Network / TURN</h2>
+          <div class="controls">
+            <button id="btnIceRefresh">Refresh</button>
+            <button id="btnForceRelay">Force TURN Only</button>
+            <button id="btnTestConnectivity">Test Connectivity</button>
+          </div>
+        </div>
+        <div class="cards" id="iceCards"></div>
+        <div class="controls" style="margin-top: 18px;">
+          <button id="btnRegenerateCreds">Regenerate Credentials</button>
+        </div>
+        <div style="margin-top: 24px;">
+          <h3 style="margin: 0 0 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);">Reachability</h3>
+          <div class="cards" id="reachabilityCards"></div>
+        </div>
+      </section>
+
+      <section id="panel-diagnostics" class="panel hidden" aria-label="Diagnostics and log streaming">
+        <!-- Live diagnostics via WebSocket /ws/admin-log -->
+        <div class="section-header">
+          <h2>Diagnostics</h2>
+          <div class="controls">
+            <div class="filter-group">
+              <button data-log-filter="INFO" class="active">INFO</button>
+              <button data-log-filter="WARN" class="active">WARN</button>
+              <button data-log-filter="ERROR" class="active">ERROR</button>
+            </div>
+            <button id="btnDownloadLogs">Download Logs</button>
+          </div>
+        </div>
+        <div id="logsArea" class="logs-area"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="debug-console" id="debugConsole" aria-live="polite">
+    <header>
+      <strong>Debug Console</strong>
+    </header>
+    <pre id="debugOutput"></pre>
+  </div>
+
+  <script type="module">
+    import { API_BASE, WS_BASE } from "/js/endpoints.js";
+    import { getConfig, createPeerConnection } from "/js/webrtc-support.js";
+
+    const sections = {
+      cameras: document.getElementById("panel-cameras"),
+      gsi: document.getElementById("panel-gsi"),
+      network: document.getElementById("panel-network"),
+      diagnostics: document.getElementById("panel-diagnostics"),
+    };
+
+    const state = {
+      gsiFilter: "ALL",
+      logFilters: new Set(["INFO", "WARN", "ERROR"]),
+      debugEnabled: false,
+      logSocket: null,
+      forceRelay: false,
+    };
+
+    const dom = {
+      sidebarButtons: Array.from(document.querySelectorAll(".sidebar button[data-section]")),
+      btnReload: document.getElementById("btnReload"),
+      btnSettings: document.getElementById("btnSettings"),
+      btnLogs: document.getElementById("btnLogs"),
+      btnCamerasRefresh: document.getElementById("btnCamerasRefresh"),
+      camerasStatus: document.getElementById("camerasStatus"),
+      camerasTable: document.getElementById("camerasTableBody"),
+      gsiCards: document.getElementById("gsiCards"),
+      gsiJson: document.getElementById("gsiJson"),
+      btnGsiRefresh: document.getElementById("btnGsiRefresh"),
+      gsiFilterButtons: Array.from(document.querySelectorAll("button[data-gsi-filter]")),
+      iceCards: document.getElementById("iceCards"),
+      reachabilityCards: document.getElementById("reachabilityCards"),
+      btnIceRefresh: document.getElementById("btnIceRefresh"),
+      btnForceRelay: document.getElementById("btnForceRelay"),
+      btnTestConnectivity: document.getElementById("btnTestConnectivity"),
+      btnRegenerateCreds: document.getElementById("btnRegenerateCreds"),
+      logsArea: document.getElementById("logsArea"),
+      logFilterButtons: Array.from(document.querySelectorAll("button[data-log-filter]")),
+      btnDownloadLogs: document.getElementById("btnDownloadLogs"),
+      debugConsole: document.getElementById("debugConsole"),
+      debugOutput: document.getElementById("debugOutput"),
+    };
+
+    function logDebug(message, ...rest) {
+      if (!state.debugEnabled) {
+        return;
+      }
+      const stamp = new Date().toISOString();
+      dom.debugOutput.textContent += `\n[${stamp}] ${message}`;
+      if (rest.length) {
+        dom.debugOutput.textContent += ` ${JSON.stringify(rest)}`;
+      }
+      dom.debugOutput.scrollTop = dom.debugOutput.scrollHeight;
+    }
+
+    function switchSection(sectionId) {
+      Object.values(sections).forEach((node) => node.classList.add("hidden"));
+      if (sections[sectionId]) {
+        sections[sectionId].classList.remove("hidden");
+      }
+      dom.sidebarButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.section === sectionId);
+      });
+    }
+
+    async function fetchJson(url, opts = {}) {
+      try {
+        const response = await fetch(url, { cache: "no-store", credentials: "include", ...opts });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      } catch (error) {
+        logDebug(`Fetch failed for ${url}`, error.message);
+        throw error;
+      }
+    }
+
+    function renderStatusBadge(status) {
+      const normalized = (status || "").toUpperCase();
+      const badge = document.createElement("span");
+      badge.className = "status-badge";
+
+      const icon = document.createElement("span");
+      icon.textContent = "\u2B24";
+
+      if (normalized === "ONLINE" || normalized === "WEBRTC") {
+        badge.classList.add(normalized === "WEBRTC" ? "status-webrtc" : "status-online");
+      } else if (normalized === "MJPEG") {
+        badge.classList.add("status-mjpeg");
+      } else {
+        badge.classList.add("status-offline");
+      }
+
+      badge.append(icon, document.createTextNode(` ${status || "Unknown"}`));
+      return badge;
+    }
+
+    function renderCamerasTable(rows) {
+      dom.camerasTable.innerHTML = "";
+      if (!rows.length) {
+        const emptyRow = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 7;
+        cell.textContent = "No active cameras";
+        cell.style.color = "var(--muted)";
+        emptyRow.appendChild(cell);
+        dom.camerasTable.appendChild(emptyRow);
+        return;
+      }
+
+      rows.forEach((entry) => {
+        const row = document.createElement("tr");
+
+        const playerCell = document.createElement("td");
+        playerCell.textContent = entry.player || "--";
+        row.appendChild(playerCell);
+
+        const teamCell = document.createElement("td");
+        teamCell.textContent = entry.team || "--";
+        row.appendChild(teamCell);
+
+        const slotCell = document.createElement("td");
+        slotCell.textContent = entry.slot || "--";
+        row.appendChild(slotCell);
+
+        const statusCell = document.createElement("td");
+        statusCell.appendChild(renderStatusBadge(entry.status));
+        row.appendChild(statusCell);
+
+        const fpsCell = document.createElement("td");
+        fpsCell.textContent = entry.fps ? `${entry.fps} fps` : "--";
+        row.appendChild(fpsCell);
+
+        const bitrateCell = document.createElement("td");
+        bitrateCell.textContent = entry.bitrate ? `${Math.round(entry.bitrate / 1000)} kbps` : "--";
+        row.appendChild(bitrateCell);
+
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "table-actions";
+        [
+          { label: "Reconnect", action: () => cameraAction(entry.player, "reconnect") },
+          { label: "Mute", action: () => cameraAction(entry.player, "mute") },
+          { label: "Snapshot", action: () => cameraAction(entry.player, "snapshot") },
+          { label: "Force Relay", action: () => cameraAction(entry.player, "force-relay") },
+        ].forEach((item) => {
+          const button = document.createElement("button");
+          button.textContent = item.label;
+          button.addEventListener("click", item.action);
+          actionsCell.appendChild(button);
+        });
+        row.appendChild(actionsCell);
+
+        dom.camerasTable.appendChild(row);
+      });
+    }
+
+    async function cameraAction(player, action) {
+      if (!player) {
+        return;
+      }
+      try {
+        await fetch(`${API_BASE}/api/cameras/${encodeURIComponent(player)}/${action}`, {
+          method: "POST",
+          credentials: "include",
+          cache: "no-store",
+        });
+        await loadCameras();
+      } catch (error) {
+        logDebug(`Camera action ${action} failed for ${player}`, error.message);
+      }
+    }
+
+    async function loadCameras() {
+      dom.camerasStatus.innerHTML = "<span class=\"spinner\"></span> Updating…";
+      dom.camerasStatus.className = "indicator warn";
+      try {
+        const data = await fetchJson(`${API_BASE}/api/active-cameras`);
+        renderCamerasTable(Array.isArray(data) ? data : []);
+        dom.camerasStatus.textContent = `Updated at ${new Date().toLocaleTimeString()}`;
+        dom.camerasStatus.className = "indicator online";
+      } catch (error) {
+        dom.camerasStatus.textContent = "Failed to load";
+        dom.camerasStatus.className = "indicator offline";
+      }
+    }
+
+    async function loadGsi() {
+      try {
+        const payload = await fetchJson(`${API_BASE}/api/gsi/live`);
+        dom.gsiJson.textContent = JSON.stringify(payload, null, 2);
+        const players = [];
+        const allPlayers = payload?.allplayers || {};
+        Object.keys(allPlayers).forEach((key) => {
+          const entry = allPlayers[key] || {};
+          players.push({
+            id: key,
+            name: entry.name || key,
+            team: (entry.team || "UNKNOWN").toUpperCase(),
+            health: entry.state?.health ?? 0,
+            weapon: entry.weapons?.active || entry.state?.weapon || "--",
+            score: entry.match_stats?.kills ?? 0,
+          });
+        });
+
+        renderGsiPlayers(players);
+      } catch (error) {
+        dom.gsiJson.textContent = JSON.stringify({ error: error.message }, null, 2);
+        dom.gsiCards.innerHTML = "";
+      }
+    }
+
+    function renderGsiPlayers(players) {
+      dom.gsiCards.innerHTML = "";
+      const filtered = players.filter((player) => {
+        if (state.gsiFilter === "ALL") {
+          return true;
+        }
+        if (state.gsiFilter === "SPECTATOR") {
+          return player.team !== "CT" && player.team !== "T";
+        }
+        return player.team === state.gsiFilter;
+      });
+
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.textContent = "No players for selected filter";
+        empty.style.color = "var(--muted)";
+        dom.gsiCards.appendChild(empty);
+        return;
+      }
+
+      filtered.forEach((player) => {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const title = document.createElement("strong");
+        title.textContent = `${player.name} (${player.team})`;
+        card.appendChild(title);
+
+        const stats = document.createElement("div");
+        stats.innerHTML = `Health: <strong>${player.health}</strong><br>Weapon: <strong>${player.weapon}</strong><br>Score: <strong>${player.score}</strong>`;
+        card.appendChild(stats);
+
+        dom.gsiCards.appendChild(card);
+      });
+    }
+
+    async function loadIceConfig() {
+      dom.iceCards.innerHTML = "<div class=\"indicator warn\"><span class=\"spinner\"></span> Loading ICE config…</div>";
+      try {
+        const config = await getConfig();
+        dom.iceCards.innerHTML = "";
+
+        const card = document.createElement("div");
+        card.className = "card";
+        const ttl = config?.ttlSec || config?.ttl || "--";
+        card.innerHTML = `<strong>ICE Servers</strong><div><pre>${JSON.stringify(config.iceServers, null, 2)}</pre></div><div>TTL: <strong>${ttl}</strong></div>`;
+        dom.iceCards.appendChild(card);
+      } catch (error) {
+        dom.iceCards.innerHTML = `<div class=\"indicator offline\">Failed to load ICE config: ${error.message}</div>`;
+      }
+    }
+
+    async function refreshIceCredentials() {
+      try {
+        await fetchJson(`${API_BASE}/api/webrtc/refresh`, { method: "POST" });
+        await loadIceConfig();
+      } catch (error) {
+        logDebug("Failed to refresh ICE credentials", error.message);
+      }
+    }
+
+    async function testConnectivity() {
+      dom.reachabilityCards.innerHTML = "<div class=\"indicator warn\"><span class=\"spinner\"></span> Testing…</div>";
+      const targets = [
+        { label: "UDP 3478", url: `${API_BASE}/api/webrtc/ping?port=3478&proto=udp` },
+        { label: "TCP 5349", url: `${API_BASE}/api/webrtc/ping?port=5349&proto=tcp` },
+        { label: "TLS 443", url: `${API_BASE}/api/webrtc/ping?port=443&proto=tls` },
+      ];
+
+      const results = await Promise.all(targets.map(async (target) => {
+        try {
+          await fetchJson(target.url);
+          return { ...target, status: "online" };
+        } catch (error) {
+          return { ...target, status: "offline", detail: error.message };
+        }
+      }));
+
+      dom.reachabilityCards.innerHTML = "";
+      results.forEach((result) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `<strong>${result.label}</strong><span class=\"indicator ${result.status === "online" ? "online" : "offline"}\">${result.status.toUpperCase()}</span>${result.detail ? `<div style=\"color: var(--muted); font-size: 0.75rem;\">${result.detail}</div>` : ""}`;
+        dom.reachabilityCards.appendChild(card);
+      });
+    }
+
+    function connectLogs() {
+      if (state.logSocket) {
+        state.logSocket.close(1000);
+      }
+
+      const socket = new WebSocket(`${WS_BASE.replace(/^http/, "ws")}/ws/admin-log`);
+      socket.addEventListener("open", () => {
+        logDebug("Log socket connected");
+      });
+
+      socket.addEventListener("message", (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          renderLogEntry(payload);
+        } catch (error) {
+          logDebug("Log parse error", error.message);
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        logDebug("Log socket closed, retrying in 3s");
+        state.logSocket = null;
+        setTimeout(connectLogs, 3000);
+      });
+
+      state.logSocket = socket;
+    }
+
+    function renderLogEntry(entry) {
+      const level = (entry.level || entry.type || "INFO").toUpperCase();
+      if (!state.logFilters.has(level)) {
+        return;
+      }
+
+      const container = document.createElement("div");
+      container.className = `log-entry ${level.toLowerCase()}`;
+      container.innerHTML = `<strong>${level}</strong> <span style="color: var(--muted); font-size: 0.7rem;">${entry.timestamp || new Date().toISOString()}</span><div>${entry.message || JSON.stringify(entry)}</div>`;
+      dom.logsArea.appendChild(container);
+      dom.logsArea.scrollTop = dom.logsArea.scrollHeight;
+    }
+
+    async function downloadLogs() {
+      try {
+        const payload = await fetchJson(`${API_BASE}/api/logs/export`);
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `admin-logs-${Date.now()}.json`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        logDebug("Failed to download logs", error.message);
+      }
+    }
+
+    function toggleDebugConsole() {
+      state.debugEnabled = !state.debugEnabled;
+      dom.debugConsole.style.display = state.debugEnabled ? "grid" : "none";
+      if (state.debugEnabled) {
+        dom.debugOutput.textContent = "Debug console enabled";
+      }
+    }
+
+    function bindEvents() {
+      dom.sidebarButtons.forEach((button) => {
+        button.addEventListener("click", () => switchSection(button.dataset.section));
+      });
+
+      dom.btnReload.addEventListener("click", () => {
+        loadAll();
+      });
+
+      dom.btnCamerasRefresh.addEventListener("click", loadCameras);
+      dom.btnGsiRefresh.addEventListener("click", loadGsi);
+      dom.btnIceRefresh.addEventListener("click", loadIceConfig);
+      dom.btnRegenerateCreds.addEventListener("click", refreshIceCredentials);
+      dom.btnTestConnectivity.addEventListener("click", testConnectivity);
+      dom.btnForceRelay.addEventListener("click", async () => {
+        state.forceRelay = !state.forceRelay;
+        dom.btnForceRelay.textContent = state.forceRelay ? "Force TURN Only: ON" : "Force TURN Only";
+        const pc = await createPeerConnection(state.forceRelay);
+        pc.close();
+      });
+      dom.btnDownloadLogs.addEventListener("click", downloadLogs);
+
+      dom.gsiFilterButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          dom.gsiFilterButtons.forEach((item) => item.classList.toggle("active", item === button));
+          state.gsiFilter = button.dataset.gsiFilter || "ALL";
+          loadGsi();
+        });
+      });
+
+      dom.logFilterButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const level = button.dataset.logFilter;
+          if (!level) {
+            return;
+          }
+          if (state.logFilters.has(level)) {
+            state.logFilters.delete(level);
+            button.classList.remove("active");
+          } else {
+            state.logFilters.add(level);
+            button.classList.add("active");
+          }
+        });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "~" || event.key === "`") {
+          event.preventDefault();
+          toggleDebugConsole();
+        }
+      });
+    }
+
+    function loadAll() {
+      loadCameras();
+      loadGsi();
+      loadIceConfig();
+      testConnectivity();
+    }
+
+    bindEvents();
+    connectLogs();
+    loadAll();
+    setInterval(loadCameras, 5000);
+  </script>
+</body>
+</html>
