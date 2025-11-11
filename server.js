@@ -639,6 +639,7 @@ const adminAuthMiddleware = basicAuth({
 const ADMIN_PATHS = [
   "/admin.html",
   "/admin-pro.html",
+  "/admin-v2.html",
   "/head_admin.html",
   "/admin",
   "/admin-panel",
@@ -680,6 +681,14 @@ app.get("/admin.html", (req, res, next) => {
 
 app.get("/admin-pro.html", (req, res, next) => {
   res.sendFile(path.join(__dirname, "private", "admin-pro.html"), (error) => {
+    if (error) {
+      next(error);
+    }
+  });
+});
+
+app.get("/admin-v2.html", (req, res, next) => {
+  res.sendFile(path.join(__dirname, "private", "admin-v2.html"), (error) => {
     if (error) {
       next(error);
     }

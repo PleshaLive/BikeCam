@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BikeCam Admin v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #03040a;
+      --panel: rgba(16, 18, 29, 0.88);
+      --panel-strong: rgba(20, 22, 33, 0.94);
+      --border: rgba(248, 255, 19, 0.22);
+      --border-soft: rgba(248, 255, 19, 0.12);
+      --accent: #f8ff13;
+      --accent-soft: rgba(248, 255, 19, 0.16);
+      --text: #f5f6ff;
+      --muted: rgba(245, 246, 255, 0.64);
+      --danger: #ff5c6b;
+      --warn: #ffc857;
+      --success: #64f9b6;
+      --radius-lg: 22px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --shadow: 0 28px 72px rgba(0, 0, 0, 0.48);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 12% 18%, rgba(248, 255, 19, 0.12), transparent 62%),
+        radial-gradient(circle at 88% 8%, rgba(100, 249, 182, 0.1), transparent 68%),
+        linear-gradient(180deg, #050712 0%, #02030a 32%, #02020a 100%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: clamp(14px, 2vw, 22px);
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background: linear-gradient(135deg, rgba(248, 255, 19, 0.16), rgba(16, 18, 29, 0.95));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: clamp(18px, 3vw, 28px);
+    }
+
+    header .header-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 2.4vw, 2rem);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .summary-card {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-soft);
+      background: rgba(6, 8, 16, 0.86);
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .summary-card strong {
+      font-size: 1.1rem;
+      letter-spacing: 0.06em;
+    }
+
+    .summary-card span {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+      gap: 18px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    aside {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .control-panel {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-soft);
+      background: var(--panel);
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .control-panel h2 {
+      margin: 0;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+
+    .control-row {
+      display: grid;
+      gap: 10px;
+    }
+
+    .button-group {
+      display: grid;
+      gap: 10px;
+    }
+
+    button, select, label.toggle {
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    button {
+      cursor: pointer;
+      border: 1px solid rgba(248, 255, 19, 0.28);
+      border-radius: var(--radius-md);
+      background: rgba(248, 255, 19, 0.12);
+      color: var(--text);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(248, 255, 19, 0.48);
+      background: rgba(248, 255, 19, 0.16);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    select {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.22);
+      background: rgba(8, 10, 18, 0.92);
+      color: var(--text);
+      padding: 10px 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    label.toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(248, 255, 19, 0.18);
+      background: rgba(6, 8, 16, 0.86);
+      padding: 10px 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    label.toggle input {
+      width: 48px;
+      height: 24px;
+      appearance: none;
+      border-radius: 999px;
+      position: relative;
+      background: rgba(255, 255, 255, 0.16);
+      transition: background 0.16s ease;
+      cursor: pointer;
+    }
+
+    label.toggle input::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--text);
+      transition: transform 0.16s ease;
+    }
+
+    label.toggle input:checked {
+      background: rgba(248, 255, 19, 0.48);
+    }
+
+    label.toggle input:checked::after {
+      transform: translateX(24px);
+    }
+
+    main {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-soft);
+      background: var(--panel-strong);
+      padding: clamp(18px, 2vw, 28px);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      gap: 18px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      align-content: start;
+    }
+
+    .tile {
+      border: 1px solid rgba(248, 255, 19, 0.14);
+      border-radius: var(--radius-lg);
+      background: rgba(8, 10, 18, 0.92);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+      min-height: 320px;
+    }
+
+    .tile-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .tile-header h3 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .tile-meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .tile-status {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .video-wrap {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(2, 2, 6, 0.9);
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-wrap video {
+      width: 100%;
+      height: 100%;
+      border-radius: inherit;
+      object-fit: cover;
+      background: black;
+    }
+
+    .video-overlay {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: grid;
+      gap: 6px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      text-align: right;
+    }
+
+    .video-overlay span {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.48);
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .stats-row span {
+      color: var(--muted);
+    }
+
+    .stats-row strong {
+      display: block;
+      color: var(--text);
+      margin-top: 2px;
+    }
+
+    .tile-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .tile-controls .control-buttons {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tile-controls select {
+      font-size: 0.78rem;
+      padding: 8px 10px;
+    }
+
+    .tile-footer {
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+    }
+
+    .tile-footer .error {
+      color: var(--danger);
+    }
+
+    .badge-ok {
+      background: rgba(100, 249, 182, 0.16);
+      color: var(--success);
+    }
+
+    .badge-warn {
+      background: rgba(255, 200, 87, 0.16);
+      color: var(--warn);
+    }
+
+    .badge-fail {
+      background: rgba(255, 92, 107, 0.18);
+      color: var(--danger);
+    }
+
+    .debug-panel {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: min(420px, 92vw);
+      max-height: 320px;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(248, 255, 19, 0.32);
+      background: rgba(6, 8, 16, 0.94);
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
+      display: none;
+      grid-template-rows: auto 1fr;
+      z-index: 2000;
+    }
+
+    .debug-panel header {
+      padding: 12px 16px;
+      background: rgba(248, 255, 19, 0.14);
+      border-bottom: 1px solid rgba(248, 255, 19, 0.28);
+    }
+
+    .debug-panel pre {
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      font-family: "Fira Code", monospace;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+    }
+
+    .token-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.36);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .token-indicator.warn {
+      background: rgba(255, 200, 87, 0.24);
+      color: var(--warn);
+    }
+
+    .token-indicator.danger {
+      background: rgba(255, 92, 107, 0.24);
+      color: var(--danger);
+    }
+
+    .empty-state {
+      border: 1px dashed rgba(248, 255, 19, 0.18);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      text-align: center;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        order: 2;
+      }
+
+      main {
+        order: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <div>
+        <h1>Admin Camera Grid v2</h1>
+        <p class="tile-meta">TURN-only resilient monitoring for BikeCam publishers</p>
+      </div>
+      <div class="token-indicator" id="tokenIndicator">Fetching TURN token…</div>
+    </div>
+    <div class="summary-bar" id="summaryBar">
+      <div class="summary-card">
+        <strong>0</strong>
+        <span>Active Relays</span>
+      </div>
+      <div class="summary-card">
+        <strong>0 kbps</strong>
+        <span>Total Bitrate</span>
+      </div>
+      <div class="summary-card">
+        <strong>0 ms</strong>
+        <span>Average RTT</span>
+      </div>
+      <div class="summary-card">
+        <strong>--</strong>
+        <span>Last Refresh</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <section class="control-panel">
+        <h2>Global Controls</h2>
+        <div class="control-row button-group">
+          <button id="muteAllBtn">Mute All</button>
+          <button id="unmuteAllBtn">Unmute All</button>
+          <button id="freezeAllBtn">Freeze All</button>
+          <button id="resumeAllBtn">Resume All</button>
+        </div>
+        <div class="control-row">
+          <label for="maxBitrateSelect">Max Bitrate (kbps)</label>
+          <select id="maxBitrateSelect">
+            <option value="300">300</option>
+            <option value="600">600</option>
+            <option value="1200" selected>1200</option>
+            <option value="2500">2500</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label class="toggle" for="forceTurnToggle">
+            Force TURN Only
+            <input type="checkbox" id="forceTurnToggle" checked>
+          </label>
+        </div>
+        <div class="control-row button-group">
+          <button id="refreshTurnBtn">Refresh TURN Token</button>
+          <button id="reloadRosterBtn">Refresh Roster</button>
+          <button id="debugToggleBtn">Toggle Debug</button>
+        </div>
+      </section>
+    </aside>
+    <main>
+      <div class="grid" id="tileGrid">
+        <div class="empty-state" id="emptyState">Waiting for camera publishers…</div>
+      </div>
+    </main>
+  </div>
+
+  <div class="debug-panel" id="debugPanel">
+    <header>
+      <strong>Debug Log</strong>
+    </header>
+    <pre id="debugOutput">Debug output will appear here.</pre>
+  </div>
+
+  <script type="module" src="/js/admin-v2.js"></script>
+</body>
+</html>
