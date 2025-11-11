@@ -486,14 +486,20 @@
           return;
         }
 
-        const session = sessions.get(desiredFocusKey);
+        const session = sessions.get(desiredFocusKey) || null;
+        const hasStream = Boolean(session && session.stream);
+        const fallbackTarget = desiredFocusDisplay || session?.nickname || "";
 
-        if (session?.stream) {
+        if (hasStream) {
           cancelFallback(session.nickname);
           if (displayedStream !== session.stream) {
             setDisplay(session.stream, session.nickname);
           }
           return;
+        }
+
+        if (displayedStream) {
+          setDisplay(null, null);
         }
 
         if (fallbackNicknames.has(desiredFocusKey)) {
@@ -503,17 +509,11 @@
           ) {
             return;
           }
-          scheduleFallback(desiredFocusDisplay || session?.nickname || "");
+          scheduleFallback(fallbackTarget);
           return;
         }
 
-        hideFallback(desiredFocusDisplay);
-
-        if (!sessions.has(desiredFocusKey)) {
-          if (displayedStream) {
-            setDisplay(null, null);
-          }
-        }
+        hideFallback(fallbackTarget);
       }
 
       function sendSignal(payload) {
