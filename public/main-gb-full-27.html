@@ -102,9 +102,9 @@
       }
       console.log("[ICE] using TURN", resolvedConfig.iceServers);
 
-      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
   const params = new URLSearchParams(window.location.search || "");
+  const FORCE_RELAY = params.get("relay") === "1";
   const preferFallback = params.get("fallback") === "mjpeg";
   const userAgent = (navigator.userAgent || "").toLowerCase();
   const forceFallback = preferFallback;
@@ -648,7 +648,7 @@
         }
 
         const connectionId = createConnectionId();
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const pc = await (await import("./js/webrtc-support.js")).createPeerConnection(FORCE_RELAY);
         const session = {
           key,
           nickname: normalized,

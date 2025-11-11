@@ -1,5 +1,5 @@
 // Updated for TURN server integration
-import { API_BASE } from "./endpoints.js";
+import { API_BASE, DEBUG_WEBRTC } from "./endpoints.js";
 
 const REMOTE_CONFIG_ENDPOINT = `${API_BASE}/api/webrtc/config`;
 const FETCH_RETRY_ATTEMPTS = 3;
@@ -7,14 +7,6 @@ const FETCH_RETRY_DELAY_MS = 300;
 
 const STATIC_CONFIG = {
   iceServers: [
-    {
-      urls: [
-        "turns:turn.raptors.life:5349",
-        "turn:turn.raptors.life:3478",
-      ],
-      username: "user",
-      credential: "pass",
-    },
     {
       urls: ["stun:stun.l.google.com:19302"],
     },
@@ -27,36 +19,19 @@ const STATIC_CONFIG = {
   },
 };
 
-let cachedConfig = null;
-let fetchPromise = null;
+let resolvedConfigPromise = null;
 
 function cloneIceServers(iceServers) {
-  return (iceServers || []).map((entry) => ({
-    ...entry,
-    urls: Array.isArray(entry.urls) ? [...entry.urls] : entry.urls,
-  }));
-}
-
-function applyConfigOverrides(base, overrides) {
-  const result = {
-    iceServers: cloneIceServers(base.iceServers),
-    fallback: { ...(base.fallback || {}) },
-  };
-
-  if (overrides && typeof overrides === "object") {
-    if (Array.isArray(overrides.iceServers) && overrides.iceServers.length) {
-      result.iceServers = cloneIceServers(overrides.iceServers);
+  return (iceServers || []).map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return null;
     }
-
-    if (overrides.fallback && typeof overrides.fallback === "object") {
-      result.fallback = {
-        ...(base.fallback || {}),
-        ...overrides.fallback,
-      };
+    const cloned = { ...entry };
+    if (Array.isArray(entry.urls)) {
+      cloned.urls = [...entry.urls];
     }
-  }
-
-  return result;
+    return cloned;
+  }).filter(Boolean);
 }
 
 function cloneConfig(config) {
@@ -64,6 +39,31 @@ function cloneConfig(config) {
     iceServers: cloneIceServers(config.iceServers),
     fallback: { ...(config.fallback || {}) },
   };
+}
+
+function mergeConfig(remote) {
+  const base = cloneConfig(STATIC_CONFIG);
+  if (!remote || typeof remote !== "object") {
+    return base;
+  }
+
+  const merged = {
+    iceServers: base.iceServers,
+    fallback: { ...base.fallback },
+  };
+
+  if (Array.isArray(remote.iceServers) && remote.iceServers.length) {
+    merged.iceServers = cloneIceServers(remote.iceServers);
+  }
+
+  if (remote.fallback && typeof remote.fallback === "object") {
+    merged.fallback = {
+      ...merged.fallback,
+      ...remote.fallback,
+    };
+  }
+
+  return merged;
 }
 
 function delay(ms) {
@@ -81,49 +81,82 @@ async function fetchRemoteConfig() {
       });
 
       if (!response.ok) {
-        const error = new Error(`HTTP ${response.status}`);
-        console.warn("[ICE] fallback to static", error?.message);
-        if (attempt < FETCH_RETRY_ATTEMPTS) {
-          await delay(FETCH_RETRY_DELAY_MS);
-          continue;
-        }
-        return null;
+        throw new Error(`HTTP ${response.status}`);
       }
 
       return response.json();
     } catch (error) {
-      console.warn("[ICE] fallback to static", error?.message);
-      if (attempt < FETCH_RETRY_ATTEMPTS) {
-        await delay(FETCH_RETRY_DELAY_MS);
-        continue;
+      if (attempt === FETCH_RETRY_ATTEMPTS) {
+        console.warn("[ICE] remote config fetch failed", error);
+        break;
       }
-      return null;
+      await delay(FETCH_RETRY_DELAY_MS * attempt);
     }
   }
 
   return null;
 }
 
-export async function getConfig() {
-  if (!cachedConfig) {
-    cachedConfig = cloneConfig(STATIC_CONFIG);
-  }
-
-  if (!fetchPromise) {
-    fetchPromise = fetchRemoteConfig().then((remoteConfig) => {
-      if (remoteConfig) {
-        cachedConfig = applyConfigOverrides(STATIC_CONFIG, remoteConfig);
+async function resolveConfig() {
+  if (!resolvedConfigPromise) {
+    resolvedConfigPromise = (async () => {
+      const remote = await fetchRemoteConfig();
+      if (remote) {
+        return mergeConfig(remote);
       }
-      return cachedConfig;
+      return cloneConfig(STATIC_CONFIG);
+    })().catch((error) => {
+      console.warn("[ICE] using static fallback", error);
+      return cloneConfig(STATIC_CONFIG);
     });
   }
 
-  await fetchPromise;
-  return cloneConfig(cachedConfig);
+  return resolvedConfigPromise;
+}
+
+export async function getConfig() {
+  const config = await resolveConfig();
+  return cloneConfig(config);
 }
 
 export function hasWebRTCSupport() {
   return typeof window !== "undefined" && typeof window.RTCPeerConnection === "function";
+}
+
+export async function createPeerConnection(forceRelay = false) {
+  const config = await resolveConfig();
+  const options = {
+    iceServers: cloneIceServers(config.iceServers),
+  };
+
+  if (forceRelay) {
+    options.iceTransportPolicy = "relay";
+  }
+
+  const pc = new RTCPeerConnection(options);
+
+  if (DEBUG_WEBRTC) {
+    const debugLabel = forceRelay ? "[WebRTC relay]" : "[WebRTC auto]";
+    pc.addEventListener("icecandidate", (event) => {
+      if (event.candidate) {
+        const { candidate } = event;
+        console.debug(
+          `${debugLabel} ICE candidate`,
+          candidate?.type || "unknown",
+          candidate?.protocol || "",
+          candidate?.candidate || ""
+        );
+      } else {
+        console.debug(`${debugLabel} ICE gathering complete`);
+      }
+    });
+
+    pc.addEventListener("connectionstatechange", () => {
+      console.debug(`${debugLabel} connection state`, pc.connectionState);
+    });
+  }
+
+  return pc;
 }
 
 export function createMjpegUrl(nickname) {

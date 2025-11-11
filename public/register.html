@@ -233,9 +233,10 @@
       }
       console.log("[ICE] using TURN", resolvedConfig.iceServers);
 
-      const ICE_SERVERS = Array.isArray(resolvedConfig.iceServers) && resolvedConfig.iceServers.length ? resolvedConfig.iceServers : [];
       const fallbackSettings = resolvedConfig.fallback && typeof resolvedConfig.fallback === "object" ? resolvedConfig.fallback : {};
       const fallbackIntervalMs = Math.max(200, Math.round(1000 / Math.max(1, fallbackSettings.maxFps || 5)));
+    const params = new URLSearchParams(window.location.search || "");
+    const FORCE_RELAY = params.get("relay") === "1";
   const wsUrl = window.WS_BASE;
       const hasSecureContext = window.isSecureContext || location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
       const hasWebRTC = hasWebRTCSupport();
@@ -786,12 +787,12 @@
             }
           }
 
-          function buildPublisherPeer({ viewerSocketId, connectionId, nickname }) {
+          async function buildPublisherPeer({ viewerSocketId, connectionId, nickname }) {
             if (!hasWebRTC) {
               return null;
             }
             const key = peerKey(viewerSocketId, connectionId);
-            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            const pc = await (await import("./js/webrtc-support.js")).createPeerConnection(FORCE_RELAY);
             peers.set(key, { pc, viewerSocketId, connectionId, nickname });
 
             if (currentStream) {
@@ -834,7 +835,7 @@
               cleanupPeer(key, true);
             }
 
-            const pc = buildPublisherPeer({ viewerSocketId, connectionId, nickname });
+            const pc = await buildPublisherPeer({ viewerSocketId, connectionId, nickname });
             if (!pc) {
               status.textContent = "WebRTC is unavailable. MJPEG fallback is running.";
               return;
