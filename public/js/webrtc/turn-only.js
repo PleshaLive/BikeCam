@@ -7,7 +7,9 @@ const DEFAULT_TURN_TCP = "turns:turn.raptors.life:5349?transport=tcp";
 const ADMIN_KEY_QUERY_PARAM = "turnKey";
 const ADMIN_KEY_STORAGE = "turnAdminKey";
 const TURN_ERROR_BANNER_ID = "turn-creds-error-banner";
-const DEFAULT_ADMIN_KEY = "admin123";
+const TURN_STORAGE_KEY = "turnCreds";
+const TURN_REFRESH_MS = 30 * 60 * 1_000;
+const DEFAULT_ADMIN_KEY = "ok6iWC7Pn/wPHJSh";
 
 function persistAdminKey(value) {
 	try {
@@ -119,6 +121,94 @@ function logTurn(event, payload) {
 	} catch (error) {
 		// ignore console issues
 	}
+}
+
+let turnAutoRefreshTimer = null;
+let turnFetchPromise = null;
+let lastTurnCreds = null;
+
+function dispatchTurnEvent(name, detail) {
+	if (typeof window === "undefined") {
+		return;
+	}
+	try {
+		window.dispatchEvent(new CustomEvent(name, { detail }));
+	} catch (error) {
+		// ignore dispatch issues
+	}
+}
+
+function normalizeTurnResponse(data, source, fetchedAtOverride) {
+	const ttlRaw = Number(data?.ttl ?? data?.ttlSec);
+	const ttlSec = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : null;
+	const iceServers = Array.isArray(data?.iceServers) ? data.iceServers : [];
+	const fetchedAt = typeof fetchedAtOverride === "number" ? fetchedAtOverride : Date.now();
+	return {
+		ttlSec,
+		iceServers,
+		raw: data,
+		fetchedAt,
+		source,
+		degraded: !iceServers.length,
+	};
+}
+
+function persistTurnCredsPayload(payload) {
+	if (typeof window === "undefined") {
+		return;
+	}
+	try {
+		const stored = {
+			...payload.raw,
+			iceServers: payload.iceServers,
+			ttl: payload.raw?.ttl ?? payload.ttlSec ?? null,
+			ttlSec: payload.ttlSec ?? null,
+			fetchedAt: payload.fetchedAt,
+		};
+		const serialized = JSON.stringify(stored);
+		window.localStorage.setItem(TURN_STORAGE_KEY, serialized);
+		try {
+			window.localStorage.turnCreds = serialized;
+		} catch (error) {
+			// ignore assignment issues
+		}
+	} catch (error) {
+		// ignore persistence issues
+	}
+}
+
+function readCachedTurnCreds() {
+	if (typeof window === "undefined") {
+		return null;
+	}
+	try {
+		const raw = window.localStorage.getItem(TURN_STORAGE_KEY) || window.localStorage.turnCreds || "";
+		if (!raw) {
+			return null;
+		}
+		const parsed = JSON.parse(raw);
+		const fetchedAt = Number(parsed?.fetchedAt) || 0;
+		if (!fetchedAt || Date.now() - fetchedAt > TURN_REFRESH_MS) {
+			return null;
+		}
+		return normalizeTurnResponse(parsed, "cache", fetchedAt);
+	} catch (error) {
+		return null;
+	}
+}
+
+function ensureTurnAutoRefresh() {
+	if (typeof window === "undefined") {
+		return;
+	}
+	if (turnAutoRefreshTimer) {
+		return;
+	}
+	turnAutoRefreshTimer = window.setInterval(() => {
+		fetchTurnCreds({ allowCache: false }).catch((error) => {
+			logTurn("auto_refresh_error", { message: error?.message || String(error) });
+		});
+	}, TURN_REFRESH_MS);
 }
 
 function sanitizeIceError(event) {
@@ -449,41 +539,77 @@ function resolveTcpOnly(options = {}) {
 	return false;
 }
 
+
 export async function fetchTurnCreds(options = {}) {
-	const adminKey = resolveAdminKey(options);
-	if (!adminKey) {
-		showTurnErrorBanner("missing-key");
-		const error = new Error("TURN admin key missing");
-		error.code = "turn-key-missing";
-		console.error("[turn] turn_creds_error", error);
-		logTurn("creds_error", { reason: "missing-key" });
-		throw error;
-	}
-	const url = new URL(TURN_CREDS_ENDPOINT);
-	url.searchParams.set("key", adminKey);
-	url.searchParams.set("t", Date.now().toString());
-	try {
-		const response = await fetch(url.toString(), { cache: "no-store" });
-		if (!response.ok) {
-			showTurnErrorBanner(response.status || "error");
-			const error = new Error(`TURN creds HTTP ${response.status}`);
-			console.error("[turn] turn_creds_error", error);
-			logTurn("creds_error", { status: response.status });
-			throw error;
+	const allowCache = options.allowCache !== false;
+	if (allowCache) {
+		const cached = readCachedTurnCreds();
+		if (cached) {
+			lastTurnCreds = cached;
+			dispatchTurnEvent("turn-creds-updated", { data: cached });
+			logTurn("creds_cache", { ttlSec: cached.ttlSec, degraded: cached.degraded });
+			ensureTurnAutoRefresh();
+			return cached;
 		}
-		const json = await response.json();
-		const iceServers = Array.isArray(json?.iceServers) ? json.iceServers : [];
-		const ttlSec = json?.ttlSec || null;
-		const masked = maskServersForLog(iceServers);
-		console.info("[turn] creds", { ttlSec, iceServers: masked });
-		logTurn("creds", { ttlSec, servers: masked });
-		return { ttlSec, iceServers };
-	} catch (error) {
-		showTurnErrorBanner("fetch-error");
-		console.error("[turn] turn_creds_error", error);
-		logTurn("creds_exception", { message: error?.message || String(error) });
-		throw error;
 	}
+
+	if (!turnFetchPromise) {
+		turnFetchPromise = (async () => {
+			const adminKey = resolveAdminKey(options);
+			const url = new URL(TURN_CREDS_ENDPOINT);
+			if (adminKey) {
+				url.searchParams.set("key", adminKey);
+			}
+			url.searchParams.set("t", Date.now().toString());
+			try {
+				const response = await fetch(url.toString(), {
+					method: "GET",
+					mode: "cors",
+					credentials: "omit",
+					cache: "no-store",
+				});
+
+				if (!response.ok) {
+					showTurnErrorBanner(response.status || "error");
+					const error = new Error(`TURN creds HTTP ${response.status}`);
+					// @ts-ignore
+					error.status = response.status;
+					logTurn("creds_error", { status: response.status });
+					dispatchTurnEvent("turn-creds-error", { status: response.status });
+					console.error("[TURN creds error]", error);
+					throw error;
+				}
+
+				const json = await response.json();
+				console.log("[TURN] iceServers", json?.iceServers || []);
+				const normalized = normalizeTurnResponse(json, "network");
+				lastTurnCreds = normalized;
+				persistTurnCredsPayload(normalized);
+				const masked = maskServersForLog(normalized.iceServers);
+				logTurn("creds_fetched", {
+					ttlSec: normalized.ttlSec,
+					servers: masked,
+					degraded: normalized.degraded,
+				});
+				dispatchTurnEvent("turn-creds-updated", { data: normalized });
+				ensureTurnAutoRefresh();
+				return normalized;
+			} catch (error) {
+				const message = error?.message || String(error);
+				logTurn("creds_exception", { message });
+				dispatchTurnEvent("turn-creds-error", { message });
+				if (!error || error.name !== "AbortError") {
+					console.error("[TURN creds error]", error);
+				}
+				showTurnErrorBanner("fetch-error");
+				throw error;
+			} finally {
+				turnFetchPromise = null;
+			}
+		})();
+	}
+
+	return turnFetchPromise;
 }
 
 export async function buildTurnOnlyIceServers(options = {}) {
@@ -497,6 +623,8 @@ export async function buildTurnOnlyIceServers(options = {}) {
 		ttlSec: creds.ttlSec || null,
 		turnOnly: forceRelay,
 		tcpOnly,
+		source: creds.source || "network",
+		degraded: Boolean(creds.degraded),
 		servers: maskServersForLog(finalServers),
 	});
 	return {
@@ -504,6 +632,8 @@ export async function buildTurnOnlyIceServers(options = {}) {
 		ttlSec: creds.ttlSec || null,
 		forceRelay,
 		tcpOnly,
+		source: creds.source || "network",
+		degraded: Boolean(creds.degraded),
 	};
 }
 
@@ -544,6 +674,8 @@ function instantiateTurnOnlyPc(ice, options = {}) {
 		tcpOnly,
 		ttlSec: ice.ttlSec || null,
 		iceServers: servers,
+		source: ice.source || null,
+		degraded: Boolean(ice.degraded),
 		keepAliveChannel: pc.__turnKeepAliveChannel || null,
 		stop: teardown,
 	};
