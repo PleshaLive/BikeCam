@@ -1,10 +1,12 @@
 import { ENV } from '/shared/env.js';
 
-let current = null; // { iceServers, expAt, ageStart }
+let current = null; // { iceServers, expAt, ageStart, ttlSec }
 let key = '';
 
-export function setAdminKey(k){ key = k; }
+export function setAdminKey(k){ key = k || ''; }
+export function getAdminKey(){ return key; }
 export function getTurnState(){ return current; }
+export function clearTurnState(){ current = null; }
 
 export async function fetchTurnCreds() {
   if(!key) throw new Error('No admin key');
@@ -12,18 +14,14 @@ export async function fetchTurnCreds() {
   const r = await fetch(u);
   if(!r.ok) throw new Error(`TURN creds HTTP ${r.status}`);
   const j = await r.json();
+  const now = Date.now();
   current = {
-    iceServers: [{ urls: j.urls, username: j.username, credential: j.credential }],
-    expAt: Date.now() + (j.ttlSec*1000),
-    ageStart: Date.now(),
+    iceServers: Array.isArray(j.iceServers) && j.iceServers.length
+      ? j.iceServers
+      : [{ urls: j.urls, username: j.username, credential: j.credential }],
+    expAt: now + (j.ttlSec * 1000),
+    ageStart: now,
+    ttlSec: j.ttlSec,
   };
-  scheduleRefresh(j.ttlSec);
   return current;
-}
-
-let refreshT = null;
-function scheduleRefresh(ttlSec){
-  if(refreshT) clearTimeout(refreshT);
-  const refreshInMs = Math.max(30_000, (ttlSec-300)*1000); // за 5 минут до истечения
-  refreshT = setTimeout(fetchTurnCreds, refreshInMs);
 }

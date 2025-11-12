@@ -14,12 +14,21 @@
     .tile video{width:100%;height:240px;object-fit:cover;background:#000}
     .badge{position:absolute;top:8px;left:8px;background:#1f2b1f;color:#c9f7c9;padding:4px 8px;border-radius:999px;font-size:12px}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-    button,select,input[type="checkbox"]{background:#1a231a;color:#e7f0e7;border:1px solid #344534;border-radius:10px;padding:8px 10px}
-    .debug{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.6);font-size:11px;padding:6px 8px;border-radius:8px;max-width:95%;white-space:nowrap}
+  button,select,input[type="checkbox"]{background:#1a231a;color:#e7f0e7;border:1px solid #344534;border-radius:10px;padding:8px 10px}
+  .debug{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.6);font-size:11px;padding:6px 8px;border-radius:8px;max-width:95%;white-space:nowrap}
+  .tile.tile-hidden{opacity:0.45}
+  .fallback-indicator{position:absolute;top:8px;right:8px;background:#2b1d06;color:#ffd18a;padding:4px 8px;border-radius:8px;font-size:11px;letter-spacing:.04em;display:none}
+  .tile[data-fallback="mjpeg"] .fallback-indicator{display:block}
+    .alert{display:none;margin-bottom:16px;padding:10px 14px;border-radius:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+    .alert-danger{background:#3d1111;color:#ffdede;border:1px solid #ff6a6a}
+    .alert-warn{background:#332c14;color:#ffeab0;border:1px solid #ffcf5a}
+    .alert.show{display:block}
+    template{display:none}
   </style>
 </head>
 <body>
   <div class="panel" style="margin:20px">
+    <div id="alertBanner" class="alert"></div>
     <div class="row">
       <div class="kpi panel">
         <div>ACTIVE RELAYS</div>
@@ -50,17 +59,19 @@
 
     <div class="panel" style="margin-top:16px">
       <div class="row" style="align-items:center">
+  <button id="muteAllBtn">MUTE ALL</button>
+  <button id="unmuteAllBtn">UNMUTE ALL</button>
         <label><input type="checkbox" id="forceTurnOnly"> Force TURN only</label>
         <label>Max Bitrate (kbps)
           <select id="globalMaxBr">
             <option>Auto</option><option>600</option><option selected>1200</option><option>2000</option><option>3500</option>
           </select>
         </label>
-        <button id="reconnectAll">Reconnect All</button>
-        <button id="freezeAll">Freeze All</button>
-        <button id="resumeAll">Resume All</button>
-        <button id="toggleDebug">Toggle Debug</button>
-        <button id="refreshRoster">Refresh Roster</button>
+  <button id="reconnectAll">RECONNECT ALL</button>
+  <button id="freezeAll">FREEZE ALL</button>
+  <button id="resumeAll">RESUME ALL</button>
+  <button id="toggleDebug">TOGGLE DEBUG</button>
+  <button id="refreshRoster">REFRESH ROSTER</button>
       </div>
     </div>
 
@@ -69,6 +80,29 @@
       <div id="tiles"></div>
     </div>
   </div>
+
+  <template id="tileTemplate">
+    <div class="tile" data-id="">
+      <video muted playsinline autoplay></video>
+      <div class="badge"><span class="tile-title"></span></div>
+      <div class="fallback-indicator">MJPEG FALLBACK</div>
+      <div class="toolbar">
+        <button data-act="focus">FOCUS</button>
+        <button data-act="reconnect">RECONNECT</button>
+        <label>
+          QUALITY
+          <select data-act="quality">
+            <option value="auto">Auto</option>
+            <option value="low">Low</option>
+            <option value="mid" selected>Mid</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        <button data-act="visibility">HIDE IN MAIN</button>
+        <button data-act="fallback">FALLBACK: OFF</button>
+      </div>
+    </div>
+  </template>
 
   <!-- Порядок подключений важен -->
   <script type="module" src="/shared/env.js"></script>
