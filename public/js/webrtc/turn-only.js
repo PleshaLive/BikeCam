@@ -1,224 +1,278 @@
 import { logEv, addCandidate, recordIceServers } from "./diag.js";
-import { getQueryFlag, parseCandidate, describeCandidate, fingerprintIceServer } from "./utils.js";
+import {
+  getQueryFlag,
+  parseCandidate,
+  describeCandidate,
+  fingerprintIceServer,
+  maskSecret,
+} from "./utils.js";
 
-async function fetchIceServers() {
-  const response = await fetch("/api/webrtc/config", { cache: "no-store" });
-  if (!response.ok) {
-    const error = new Error(`ICE config HTTP ${response.status}`);
-    logEv("ice", "config_error", { status: response.status });
-    throw error;
-  }
-  const json = await response.json();
-  const iceServers = Array.isArray(json.iceServers) ? json.iceServers : [];
-  const ttlSec = json.ttlSec || json.ttl || null;
-  logEv("ice", "config_fetched", { ttlSec });
-  return { iceServers, ttlSec };
-}
+const DEFAULT_TURN_UDP = "turn:turn.raptors.life:3478?transport=udp";
+const DEFAULT_TURN_TCP = "turns:turn.raptors.life:5349?transport=tcp";
 
-function filterTurnServers(servers, { forceTurnOnly, tcpOnly }) {
-  if (!Array.isArray(servers)) {
-    return [];
-  }
-  const filtered = [];
-  servers.forEach((entry) => {
-    if (!entry) {
-      return;
-    }
-    const urls = Array.isArray(entry.urls) ? entry.urls : [entry.urls];
-    const turnOnly = urls.filter((url) => typeof url === "string" && url.trim().toLowerCase().startsWith("turn"));
-    if (!turnOnly.length) {
-      return;
-    }
-    const tcpOnlyUrls = tcpOnly
-      ? turnOnly.filter((url) => url.toLowerCase().startsWith("turns:") || /transport=tcp/i.test(url))
-      : turnOnly;
-    if (!tcpOnlyUrls.length && tcpOnly) {
-      return;
-    }
-    filtered.push({ ...entry, urls: tcpOnly ? tcpOnlyUrls : turnOnly });
-  });
-  return filtered;
-}
-
-function noteIceServersForLog(servers) {
-  recordIceServers(servers);
-  const compact = servers.map((server) => fingerprintIceServer(server));
-  logEv("ice", "servers_applied", { servers: compact });
-}
-
-function wrapAddIceCandidate(pc, forceTurnOnly) {
-  const original = pc.addIceCandidate.bind(pc);
-  pc.addIceCandidate = async (candidate) => {
-    if (candidate && candidate.candidate) {
-      const parsed = parseCandidate(candidate.candidate);
-      addCandidate("remote", parsed, { dropped: false });
-      logEv("signal", "candidate_remote", describeCandidate(parsed));
-      if (forceTurnOnly && parsed && parsed.type && parsed.type !== "relay") {
-        logEv("signal", "candidate_remote_dropped", parsed);
-        return Promise.resolve();
-      }
-    }
-    try {
-      return await original(candidate);
-    } catch (error) {
-      logEv("signal", "error", { message: error?.message || String(error) });
-      throw error;
-    }
-  };
-}
-
-function setupWindowHelpers(pc) {
+function pushLog(event, payload) {
   try {
-    window.pc = pc;
-    window.dumpStats = async () => {
-      const report = await pc.getStats();
-      const summary = [];
-      report.forEach((entry) => {
-        if (entry.type === "candidate-pair" && entry.state === "succeeded" && entry.nominated) {
-          summary.push({
-            id: entry.id,
-            currentRoundTripTime: entry.currentRoundTripTime,
-            availableOutgoingBitrate: entry.availableOutgoingBitrate,
-            availableIncomingBitrate: entry.availableIncomingBitrate,
-            bytesSent: entry.bytesSent,
-            bytesReceived: entry.bytesReceived,
-          });
-        }
-      });
-      console.table(summary);
+    logEv("turn", event, payload);
+    if (Array.isArray(window.__webrtcLog)) {
+      window.__webrtcLog.push({ t: new Date().toISOString(), event, payload });
+    }
+  } catch (error) {
+    // ignore logging bridge errors
+  }
+}
+
+function scrubServersForLog(servers) {
+  return servers.map((entry) => {
+    if (!entry) {
+      return entry;
+    }
+    const masked = {
+      ...entry,
+      username: entry.username ? maskSecret(entry.username) : entry.username,
+      credential: entry.credential ? maskSecret(entry.credential) : entry.credential,
     };
-    window.selected = async () => {
-      const report = await pc.getStats();
+    if (Array.isArray(masked.urls)) {
+      masked.urls = masked.urls.slice();
+    }
+    return masked;
+  });
+}
+
+export async function buildTurnOnlyIceServers({ tcpOnly = false } = {}) {
+  const turnFlag = getQueryFlag("turnOnly", 1);
+  const tcpFlag = getQueryFlag("tcpOnly", tcpOnly ? 1 : 0);
+  const forceRelay = turnFlag !== false;
+  const tcpOnlyResolved = Boolean(tcpFlag || tcpOnly);
+
+  const response = await fetch("/api/webrtc/turn-creds", { cache: "no-store" });
+  if (!response.ok) {
+    pushLog("turn_creds_error", { status: response.status });
+    throw new Error(`TURN creds HTTP ${response.status}`);
+  }
+
+  const json = await response.json();
+  const username = json?.username || "";
+  const credential = json?.credential || "";
+  const ttlSec = json?.ttlSec || null;
+
+  const servers = [];
+  if (!tcpOnlyResolved) {
+    servers.push({ urls: [DEFAULT_TURN_UDP], username, credential });
+  }
+  servers.push({ urls: [DEFAULT_TURN_TCP], username, credential });
+
+  const filtered = tcpOnlyResolved
+    ? servers.filter((entry) => Array.isArray(entry.urls) ? entry.urls.some((url) => /transport=tcp/i.test(url)) : /transport=tcp/i.test(entry.urls))
+    : servers;
+
+  const masked = scrubServersForLog(filtered);
+  pushLog("turn_config_fetched", { ttlSec, tcpOnly: tcpOnlyResolved, forceRelay, servers: masked });
+  recordIceServers(filtered);
+
+  return { iceServers: filtered, ttlSec, forceRelay, tcpOnly: tcpOnlyResolved };
+}
+
+function redactPayload(obj) {
+  if (!obj) {
+    return obj;
+  }
+  return JSON.parse(
+    JSON.stringify(obj, (key, value) => {
+      if (key === "username" || key === "credential") {
+        return maskSecret(value);
+      }
+      return value;
+    })
+  );
+}
+
+function trackChannelBind(report) {
+  let bound = false;
+  report.forEach((entry) => {
+    if (entry.type === "data-channel" && entry.label === "keepalive" && entry.state === "open") {
+      bound = true;
+    }
+  });
+  return bound;
+}
+
+function makeStatsSampler(pc) {
+  let timer = null;
+  const loop = async () => {
+    try {
+      const report = await pc.getStats(null);
+      let selectedPair = null;
       let transport = null;
       report.forEach((entry) => {
         if (entry.type === "transport" && entry.selectedCandidatePairId) {
           transport = entry;
         }
       });
-      if (!transport || !transport.selectedCandidatePairId) {
-        console.warn("No selected pair");
-        return;
+      if (transport?.selectedCandidatePairId) {
+        selectedPair = report.get(transport.selectedCandidatePairId);
       }
-      const pair = report.get(transport.selectedCandidatePairId);
-      if (!pair) {
-        console.warn("Pair missing");
-        return;
+      let relay = null;
+      if (selectedPair) {
+        relay = {
+          id: selectedPair.id,
+          state: selectedPair.state,
+          nominated: Boolean(selectedPair.nominated),
+          bytesSent: selectedPair.bytesSent,
+          bytesReceived: selectedPair.bytesReceived,
+          currentRoundTripTime: selectedPair.currentRoundTripTime,
+          availableOutgoingBitrate: selectedPair.availableOutgoingBitrate,
+          availableIncomingBitrate: selectedPair.availableIncomingBitrate,
+        };
+        const local = report.get(selectedPair.localCandidateId);
+        const remote = report.get(selectedPair.remoteCandidateId);
+        if (local || remote) {
+          relay.local = local ? describeCandidate(parseCandidate(local.candidate || "")) : null;
+          relay.remote = remote ? describeCandidate(parseCandidate(remote.candidate || "")) : null;
+        }
       }
-      const local = report.get(pair.localCandidateId);
-      const remote = report.get(pair.remoteCandidateId);
-      console.log("Selected pair", { pair, local, remote });
-    };
-  } catch (error) {
-    // ignore window binding issues
-  }
+      pushLog("stats", {
+        relay,
+        channelBind: trackChannelBind(report),
+      });
+    } catch (error) {
+      pushLog("stats_error", { message: error?.message || String(error) });
+    }
+    timer = setTimeout(loop, 1_000);
+  };
+  loop();
+  return () => timer && clearTimeout(timer);
 }
 
-function extractSummaryCandidates(report) {
+function wrapIceCandidate(pc, forceRelay) {
+  const originalAdd = pc.addIceCandidate.bind(pc);
+  pc.addIceCandidate = async (candidate) => {
+    if (candidate && candidate.candidate) {
+      const parsed = parseCandidate(candidate.candidate);
+      addCandidate("remote", parsed, { dropped: false });
+      logEv("signal", "candidate_remote", describeCandidate(parsed));
+      if (forceRelay && parsed?.type && parsed.type !== "relay") {
+        pushLog("candidate_filtered_remote", { type: parsed.type });
+        return Promise.resolve();
+      }
+    }
+    return originalAdd(candidate);
+  };
+}
+
+function attachDiagnostics(pc, forceRelay) {
+  pc.addEventListener("iceconnectionstatechange", () => {
+    pushLog("pc_ice", {
+      iceConnectionState: pc.iceConnectionState,
+      iceGatheringState: pc.iceGatheringState,
+      signalingState: pc.signalingState,
+      connectionState: pc.connectionState,
+    });
+  });
+  pc.addEventListener("connectionstatechange", () => {
+    pushLog("pc_conn", {
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+    });
+  });
+  pc.addEventListener("signalingstatechange", () => {
+    pushLog("pc_sig", { signalingState: pc.signalingState });
+  });
+  pc.addEventListener("icegatheringstatechange", () => {
+    pushLog("pc_gather", { state: pc.iceGatheringState });
+  });
+  pc.addEventListener("icecandidateerror", (event) => {
+    pushLog("ice_error", redactPayload(event));
+  });
+  pc.addEventListener("icecandidate", (event) => {
+    if (!event.candidate) {
+      pushLog("candidate_complete", {});
+      return;
+    }
+    const raw = event.candidate.candidate || "";
+    const parsed = parseCandidate(raw);
+    const desc = describeCandidate(parsed);
+    if (forceRelay && parsed?.type && parsed.type !== "relay") {
+      pushLog("candidate_filtered_local", { candidate: desc });
+      return;
+    }
+    addCandidate("local", parsed, { dropped: false });
+    pushLog("candidate_local", { candidate: desc });
+  });
+
+  wrapIceCandidate(pc, forceRelay);
+}
+
+export async function createRelayOnlyPC(opts = {}) {
+  const { iceServers, ttlSec, forceRelay, tcpOnly } = await buildTurnOnlyIceServers(opts);
+
+  const config = {
+    iceServers,
+    iceTransportPolicy: forceRelay ? "relay" : "all",
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require",
+    iceCandidatePoolSize: 0,
+    sdpSemantics: "unified-plan",
+  };
+
+  const pc = new RTCPeerConnection(config);
+  attachDiagnostics(pc, forceRelay);
+  const stopStats = makeStatsSampler(pc);
+
+  const keepalive = pc.createDataChannel("keepalive", { ordered: false, maxRetransmits: 0 });
+  const interval = setInterval(() => {
+    if (keepalive.readyState === "open") {
+      try {
+        keepalive.send("ping");
+      } catch (error) {
+        pushLog("keepalive_error", { message: error?.message || String(error) });
+      }
+    }
+  }, 10_000);
+  keepalive.addEventListener("close", () => pushLog("keepalive_close", {}));
+  keepalive.addEventListener("open", () => pushLog("keepalive_open", {}));
+
+  pc.__turnOnly = {
+    forceRelay,
+    tcpOnly,
+    ttlSec,
+    stopStats: () => {
+      stopStats();
+      clearInterval(interval);
+    },
+  };
+
+  pushLog("pc_created", {
+    forceRelay,
+    tcpOnly,
+    ttlSec,
+    servers: scrubServersForLog(iceServers),
+  });
+
+  return pc;
+}
+
+export async function createTurnOnlyPeerConnection(opts = {}) {
+  return createRelayOnlyPC(opts);
+}
+
+export async function dumpSelectedPair(pc) {
+  const report = await pc.getStats();
+  const result = {};
   let transport = null;
   report.forEach((entry) => {
     if (entry.type === "transport" && entry.selectedCandidatePairId) {
       transport = entry;
     }
   });
-  if (!transport) {
+  if (!transport?.selectedCandidatePairId) {
     return null;
   }
   const pair = report.get(transport.selectedCandidatePairId);
   if (!pair) {
     return null;
   }
-  const local = report.get(pair.localCandidateId);
-  const remote = report.get(pair.remoteCandidateId);
-  return { pair, local, remote };
-}
-
-export async function createTurnOnlyPeerConnection(opts = {}) {
-  const forceTurnOnly = opts.forceTurnOnly ?? getQueryFlag("turnOnly", 1);
-  const tcpOnly = opts.tcpOnly ?? getQueryFlag("tcpOnly", 0);
-
-  const { iceServers, ttlSec } = await fetchIceServers();
-  const servers = forceTurnOnly ? filterTurnServers(iceServers, { forceTurnOnly, tcpOnly }) : iceServers;
-  noteIceServersForLog(servers);
-
-  const config = {
-    iceServers: servers,
-    iceTransportPolicy: forceTurnOnly ? "relay" : "all",
-    bundlePolicy: "max-bundle",
-    rtcpMuxPolicy: "require",
-    sdpSemantics: "unified-plan",
-    iceCandidatePoolSize: 0,
-  };
-
-  const pc = new RTCPeerConnection(config);
-  setupWindowHelpers(pc);
-  wrapAddIceCandidate(pc, forceTurnOnly);
-
-  logEv("pc", "created", { forceTurnOnly, tcpOnly, ttlSec });
-
-  pc.addEventListener("icegatheringstatechange", () => {
-    logEv("pc", "icegatheringstate", pc.iceGatheringState);
-  });
-  pc.addEventListener("iceconnectionstatechange", () => {
-    logEv("pc", "iceconnectionstate", pc.iceConnectionState);
-  });
-  pc.addEventListener("connectionstatechange", () => {
-    logEv("pc", "connectionstate", pc.connectionState);
-  });
-  pc.addEventListener("signalingstatechange", () => {
-    logEv("pc", "signalingstate", pc.signalingState);
-  });
-  pc.addEventListener("negotiationneeded", () => {
-    logEv("pc", "negotiationneeded");
-  });
-  pc.addEventListener("track", (event) => {
-    const track = event.track;
-    logEv("pc", "track", { kind: track.kind, id: track.id, label: track.label });
-  });
-  pc.addEventListener("icecandidate", (event) => {
-    if (!event.candidate) {
-      logEv("pc", "icecandidate", null);
-      return;
-    }
-    const candidate = event.candidate.candidate || "";
-    const parsed = parseCandidate(candidate);
-    const desc = describeCandidate(parsed);
-    if (forceTurnOnly && parsed && parsed.type && parsed.type !== "relay") {
-      addCandidate("local", parsed, { dropped: true, note: "non-relay filtered" });
-      logEv("pc", "candidate_dropped", desc);
-      return;
-    }
-    addCandidate("local", parsed, { dropped: false });
-    logEv("pc", "candidate", desc);
-    pc.dispatchEvent(
-      new CustomEvent("turncandidate", {
-        detail: { candidate: event.candidate, parsed },
-      })
-    );
-  });
-  pc.addEventListener("icecandidateerror", (event) => {
-    logEv("pc", "icecandidateerror", {
-      url: event.url,
-      errorCode: event.errorCode,
-      errorText: event.errorText,
-      address: event.address,
-      port: event.port,
-    });
-  });
-
-  pc.__turnOnly = {
-    forceTurnOnly,
-    tcpOnly,
-    ttlSec,
-    getSelectedPair: async () => {
-      const report = await pc.getStats();
-      return extractSummaryCandidates(report);
-    },
-  };
-
-  return pc;
-}
-
-export async function dumpSelectedPair(pc) {
-  const report = await pc.getStats();
-  return extractSummaryCandidates(report);
+  result.pair = pair;
+  result.local = report.get(pair.localCandidateId);
+  result.remote = report.get(pair.remoteCandidateId);
+  return result;
 }
