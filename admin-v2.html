@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ADMIN CAMERA GRID V2</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{background:#0c0f0c;color:#e7f0e7;font-family:Inter,system-ui,Arial}
+    .panel{border:1px solid #293229;border-radius:14px;padding:16px;background:linear-gradient(180deg,#121812,#0c100c)}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .kpi{min-width:220px}
+    #tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+    .tile{position:relative;border:1px solid #2a332a;border-radius:14px;overflow:hidden;background:#000}
+    .tile video{width:100%;height:240px;object-fit:cover;background:#000}
+    .badge{position:absolute;top:8px;left:8px;background:#1f2b1f;color:#c9f7c9;padding:4px 8px;border-radius:999px;font-size:12px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    button,select,input[type="checkbox"]{background:#1a231a;color:#e7f0e7;border:1px solid #344534;border-radius:10px;padding:8px 10px}
+    .debug{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.6);font-size:11px;padding:6px 8px;border-radius:8px;max-width:95%;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <div class="panel" style="margin:20px">
+    <div class="row">
+      <div class="kpi panel">
+        <div>ACTIVE RELAYS</div>
+        <h2 id="kpiRelays">0</h2>
+      </div>
+      <div class="kpi panel">
+        <div>TOTAL BITRATE</div>
+        <h2 id="kpiBitrate">0 kbps</h2>
+      </div>
+      <div class="kpi panel">
+        <div>AVERAGE RTT</div>
+        <h2 id="kpiRtt">0 ms</h2>
+      </div>
+      <div class="kpi panel">
+        <div>LAST REFRESH</div>
+        <h2 id="kpiRefresh">--</h2>
+      </div>
+      <div class="kpi panel">
+        <div>TURN TOKEN</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <input id="turnKeyInput" placeholder="ADMIN KEY" style="flex:1;padding:8px;border-radius:8px;border:1px solid #344534;background:#0f150f;color:#cfe7cf">
+          <button id="applyTurnKeyBtn">Apply</button>
+          <button id="refreshTurnBtn">Refresh token</button>
+        </div>
+        <div id="tokenAge" style="margin-top:8px;font-size:12px;opacity:.8">age: 0m • left: --m</div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="row" style="align-items:center">
+        <label><input type="checkbox" id="forceTurnOnly"> Force TURN only</label>
+        <label>Max Bitrate (kbps)
+          <select id="globalMaxBr">
+            <option>Auto</option><option>600</option><option selected>1200</option><option>2000</option><option>3500</option>
+          </select>
+        </label>
+        <button id="reconnectAll">Reconnect All</button>
+        <button id="freezeAll">Freeze All</button>
+        <button id="resumeAll">Resume All</button>
+        <button id="toggleDebug">Toggle Debug</button>
+        <button id="refreshRoster">Refresh Roster</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;min-height:240px">
+      <div id="emptyHint" style="opacity:.8">WAITING FOR CAMERA PUBLISHERS…</div>
+      <div id="tiles"></div>
+    </div>
+  </div>
+
+  <!-- Порядок подключений важен -->
+  <script type="module" src="/shared/env.js"></script>
+  <script type="module" src="/webrtc/turn.js"></script>
+  <script type="module" src="/webrtc/pc-factory.js"></script>
+  <script type="module" src="/diag/stats-panel.js"></script>
+  <script type="module" src="/state/visibility-store.js"></script>
+  <script type="module" src="/admin-v2.js"></script>
+</body>
+</html>
