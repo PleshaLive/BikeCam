@@ -1,5 +1,4 @@
 {
-  "extends": "./tsconfig.node.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "module": "ESNext",
@@ -8,9 +7,10 @@
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": []
   },
   "include": ["src"]
 }

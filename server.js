@@ -805,6 +805,43 @@ app.get("/api/webrtc/config", (req, res) => {
   });
 });
 
+// Админская выдача TURN-кредов в формате, который ждёт фронт:
+app.get("/api/webrtc/turn-creds", (req, res) => {
+  const adminKey = String(req.query.key || "");
+  if (adminKey !== process.env.TURN_ADMIN_KEY) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  const { username, credential, ttlSec } = genTurnRestCred({
+    secret: TURN_SECRET,
+    ttlSec: 3600,
+    userId: "admin-viewer"
+  });
+  res.json({
+    urls: [
+      "stun:turn.raptors.life:3478",
+      "turn:turn.raptors.life:3478?transport=udp",
+      "turns:turn.raptors.life:5349?transport=tcp"
+    ],
+    username,
+    credential,
+    ttlSec
+  });
+});
+
+let visibilityState = { hidden: {} }; // { hidden: { "<nicknameKey>": true } }
+
+app.get("/api/visibility", requireAdminAccess, (_req, res) => {
+  res.json(visibilityState);
+});
+
+app.post("/api/visibility", requireAdminAccess, (req, res) => {
+  const next = req.body && typeof req.body === "object" ? req.body : {};
+  visibilityState = {
+    hidden: typeof next.hidden === "object" ? next.hidden : {}
+  };
+  res.json({ ok: true, state: visibilityState });
+});
+
 function writeMjpegFrame(res, frame) {
   if (!res || res.writableEnded || !frame?.buffer) {
     return;
