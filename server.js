@@ -21,6 +21,8 @@ const __dirname = path.dirname(__filename);
 const OWNER_IP = process.env.OWNER_IP || "127.0.0.1";
 const ADMIN_DATA_DIR = path.join(__dirname, "data");
 const ADMIN_CONFIG_PATH = path.join(ADMIN_DATA_DIR, "admin-config.json");
+const VISIBILITY_PATH = path.join(ADMIN_DATA_DIR, "visibility.json");
+const VISIBILITY_SECTIONS = ["hidden", "quality", "forceTurn", "codec"];
 const PUBLIC_DIR = path.join(__dirname, "public");
 const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)(\.(25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
 const STEAM_UNIVERSE_SHIFT = 56n;
@@ -828,18 +830,212 @@ app.get("/api/webrtc/turn-creds", (req, res) => {
   });
 });
 
-let visibilityState = { hidden: {} }; // { hidden: { "<nicknameKey>": true } }
+function ensureVisibilityShape(store) {
+  const base = store && typeof store === "object" ? { ...store } : {};
+  VISIBILITY_SECTIONS.forEach((section) => {
+    if (!base[section] || typeof base[section] !== "object") {
+      base[section] = {};
+    }
+  });
+  return base;
+}
+
+function normalizeVisibilityKey(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const key = String(value).trim();
+  return key ? key : null;
+}
+
+function normalizeQualityPreset(value) {
+  const preset = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["low", "mid", "high"].includes(preset) ? preset : null;
+}
+
+function normalizeTransportPreset(value) {
+  const preset = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["auto", "udp", "tcp"].includes(preset) ? preset : null;
+}
+
+function normalizeCodecPreset(value) {
+  const preset = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["default", "h264", "vp8"].includes(preset) ? preset : null;
+}
+
+function loadVisibilityStore() {
+  try {
+    fs.mkdirSync(ADMIN_DATA_DIR, { recursive: true });
+  } catch (error) {
+    console.warn("Failed to prepare visibility directory", error);
+  }
+
+  if (!fs.existsSync(VISIBILITY_PATH)) {
+    const initial = ensureVisibilityShape({});
+    try {
+      fs.writeFileSync(VISIBILITY_PATH, JSON.stringify(initial, null, 2));
+    } catch (error) {
+      console.warn("Failed to seed visibility store", error);
+    }
+    return initial;
+  }
+
+  try {
+    const raw = fs.readFileSync(VISIBILITY_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    return ensureVisibilityShape(parsed);
+  } catch (error) {
+    console.warn("Failed to load visibility store", error);
+    return ensureVisibilityShape({});
+  }
+}
+
+async function persistVisibilityStore(store) {
+  const payload = ensureVisibilityShape(store);
+  await fsPromises.mkdir(ADMIN_DATA_DIR, { recursive: true });
+  await fsPromises.writeFile(
+    VISIBILITY_PATH,
+    JSON.stringify(payload, null, 2)
+  );
+}
+
+function mergeVisibilityDelta(target, delta) {
+  const next = ensureVisibilityShape(target);
+  let changed = false;
+
+  if (!delta || typeof delta !== "object") {
+    return { changed, store: next };
+  }
+
+  VISIBILITY_SECTIONS.forEach((section) => {
+    const patch = delta[section];
+    if (!patch || typeof patch !== "object") {
+      return;
+    }
+
+    const bucket = next[section];
+    Object.entries(patch).forEach(([rawKey, rawValue]) => {
+      const key = normalizeVisibilityKey(rawKey);
+      if (!key) {
+        return;
+      }
+
+      let normalizedValue;
+      if (section === "hidden") {
+        normalizedValue = rawValue === null ? null : Boolean(rawValue);
+      } else if (section === "quality") {
+        normalizedValue = rawValue === null ? null : normalizeQualityPreset(rawValue);
+      } else if (section === "forceTurn") {
+        normalizedValue = rawValue === null ? null : normalizeTransportPreset(rawValue);
+      } else if (section === "codec") {
+        normalizedValue = rawValue === null ? null : normalizeCodecPreset(rawValue);
+      }
+
+      if (normalizedValue === undefined) {
+        return;
+      }
+
+      if (normalizedValue === null) {
+        if (key in bucket) {
+          delete bucket[key];
+          changed = true;
+        }
+        return;
+      }
+
+      if (bucket[key] !== normalizedValue) {
+        bucket[key] = normalizedValue;
+        changed = true;
+      }
+    });
+  });
+
+  return { changed, store: next };
+}
+
+let visibilityStore = loadVisibilityStore();
+
+function coerceVisibilityDelta(payload) {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "id")) {
+    const key = normalizeVisibilityKey(payload.id);
+    if (!key) {
+      return {};
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "visible")) {
+      const visible = Boolean(payload.visible);
+      return {
+        hidden: {
+          [key]: visible ? null : true,
+        },
+      };
+    }
+  }
+
+  const delta = {};
+  VISIBILITY_SECTIONS.forEach((section) => {
+    if (payload[section] && typeof payload[section] === "object") {
+      delta[section] = payload[section];
+    }
+  });
+  return delta;
+}
+
+function broadcastVisibilityState() {
+  broadcast({
+    type: "VISIBILITY_STATE",
+    state: visibilityStore,
+  });
+}
+
+function broadcastLegacyVisibilityDelta(delta) {
+  if (!delta || typeof delta !== "object") {
+    return;
+  }
+
+  const hiddenPatch = delta.hidden;
+  if (!hiddenPatch || typeof hiddenPatch !== "object") {
+    return;
+  }
+
+  Object.entries(hiddenPatch).forEach(([rawKey, rawValue]) => {
+    const key = normalizeVisibilityKey(rawKey);
+    if (!key) {
+      return;
+    }
+
+    const visible = rawValue === null ? true : !Boolean(rawValue);
+    broadcast({
+      type: "visibility.update",
+      id: key,
+      visible,
+    });
+  });
+}
 
 app.get("/api/visibility", requireAdminAccess, (_req, res) => {
-  res.json(visibilityState);
+  res.json({ ok: true, state: visibilityStore });
 });
 
-app.post("/api/visibility", requireAdminAccess, (req, res) => {
-  const next = req.body && typeof req.body === "object" ? req.body : {};
-  visibilityState = {
-    hidden: typeof next.hidden === "object" ? next.hidden : {}
-  };
-  res.json({ ok: true, state: visibilityState });
+app.post("/api/visibility", requireAdminAccess, async (req, res) => {
+  const delta = coerceVisibilityDelta(req.body);
+  const { changed, store } = mergeVisibilityDelta(visibilityStore, delta);
+  visibilityStore = store;
+
+  if (changed) {
+    try {
+      await persistVisibilityStore(visibilityStore);
+    } catch (error) {
+      console.warn("Failed to persist visibility store", error);
+    }
+    broadcastVisibilityState();
+    broadcastLegacyVisibilityDelta(delta);
+  }
+
+  res.json({ ok: true, state: visibilityStore, changed });
 });
 
 function writeMjpegFrame(res, frame) {
@@ -2171,6 +2367,7 @@ wss.on("connection", (socket) => {
     currentFocus: gsiState.currentFocus,
     publishers: getActivePublishers(),
     forcedFallback: getForcedFallbackList(),
+    visibility: visibilityStore,
   });
   logEvent("socket", "WebSocket connected", {
     socketId,

@@ -580,9 +580,8 @@ class TileController {
 		if (!this.visibilityStore) {
 			return;
 		}
-		this.visibilityUnsub = this.visibilityStore.subscribe((map) => {
-			const visible = map[this.key];
-			const hidden = visible === false;
+		this.visibilityUnsub = this.visibilityStore.subscribe((state) => {
+			const hidden = Boolean(state.hidden?.[this.key]);
 			this.hiddenByAdmin = hidden;
 			this.updateVisibility();
 			this.dom.hideBtn.textContent = hidden ? "Show in Main" : "Hide in Main";
@@ -678,8 +677,8 @@ class TileController {
 		if (!this.visibilityStore) {
 			return;
 		}
-		const next = this.hiddenByAdmin ? true : false;
-		this.visibilityStore.set(this.key, next).catch(() => {});
+		const nextHidden = !this.hiddenByAdmin;
+		this.visibilityStore.setHidden(this.key, nextHidden).catch(() => {});
 	}
 
 	async start(reason = "initial") {
@@ -1147,8 +1146,11 @@ async function ensureVisibilityStore() {
 		return state.visibilityStore;
 	}
 	const store = new VisibilityStore({
-		fetchInitial: async () => fetchJson(buildApiUrl(VISIBILITY_ENDPOINT)),
-		pushUpdate: ({ id, visible }) => postJson(buildApiUrl(VISIBILITY_ENDPOINT), { id, visible }),
+		fetchInitial: async () => {
+			const payload = await fetchJson(buildApiUrl(VISIBILITY_ENDPOINT));
+			return payload?.state || payload;
+		},
+		pushUpdate: (delta) => postJson(buildApiUrl(VISIBILITY_ENDPOINT), delta),
 		onRemoteUpdate: (handler) => {
 			remoteVisibilityListeners.add(handler);
 			return () => remoteVisibilityListeners.delete(handler);
@@ -1313,6 +1315,9 @@ function handleSignalMessage(payload) {
 	switch (payload?.type) {
 		case "WELCOME":
 			handlePublishers(payload.publishers || []);
+			if (payload.visibility && typeof payload.visibility === "object") {
+				emitRemoteVisibility({ state: payload.visibility });
+			}
 			break;
 		case "ACTIVE_PUBLISHERS":
 			handlePublishers(payload.publishers || []);
@@ -1337,6 +1342,9 @@ function handleSignalMessage(payload) {
 			break;
 		}
 		case "visibility.update":
+			emitRemoteVisibility(payload);
+			break;
+		case "VISIBILITY_STATE":
 			emitRemoteVisibility(payload);
 			break;
 		default:
