@@ -704,6 +704,14 @@ app.get("/_webrtc", (req, res, next) => {
   });
 });
 
+app.get("/webrtc/diag", (req, res, next) => {
+  res.sendFile(path.join(PUBLIC_DIR, "webrtc", "diag", "index.html"), (error) => {
+    if (error) {
+      next(error);
+    }
+  });
+});
+
 app.get("/head_admin.html", (req, res, next) => {
   res.sendFile(path.join(__dirname, "head_admin.html"), (error) => {
     if (error) {

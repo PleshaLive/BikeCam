@@ -38,6 +38,30 @@ npm start
 
 Если нужен другой домен, добавьте его в список в `server.js`.
 
+## WebRTC Diagnostics UI
+
+Для проверки доступности собственного TURN сервера добавлена страница `/webrtc/diag`, собранная на React + TypeScript. Страница запрашивает учётные данные у бекенда, кеширует их на TTL/2 и умеет деградировать к публичному STUN при недоступности сервиса.
+
+Пример `.env` для локальной разработки:
+
+```dotenv
+VITE_TURN_ENDPOINT=/api/turn
+```
+
+При деплое на другой домен можно указать полный URL, например:
+
+```dotenv
+VITE_TURN_ENDPOINT=https://bikecam.onrender.com/api/turn
+```
+
+### Сборка и запуск
+
+- `npm run client:dev` — запустить Vite dev-сервер (порт 5173).
+- `npm run client:build` — собрать статические ассеты в `public/webrtc/diag` (используется Express маршрутом `/webrtc/diag`).
+- `npm run client:preview` — локально посмотреть production-сборку.
+
+После `client:build` Express автоматически отдаёт собранный бандл по адресу `https://<домен>/webrtc/diag`.
+
 ## Маршруты клиента
 
 - `/main-gb-full-27.html` — главный виджет, показывающий камеру текущего наблюдаемого игрока.
