@@ -7,7 +7,7 @@ import {
 } from "./shared/env.js";
 import { createReceiverPc, listQualityPresets } from "./webrtc/pc-factory.js";
 import startTileStats from "./webrtc/stats-panel.js";
-import VisibilityStore from "../state/visibility-store.js";
+import VisibilityStore from "./state/visibility-store.js";
 import { parseCandidate } from "./webrtc/utils.js";
 
 const SIGNAL_URL = WS_BASE;
