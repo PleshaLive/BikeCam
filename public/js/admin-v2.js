@@ -1,6 +1,7 @@
 import { API_BASE, WS_BASE } from "./endpoints.js";
 import { logEv } from "./webrtc/diag.js";
 import { getQueryFlag, parseCandidate } from "./webrtc/utils.js";
+import { buildTurnOnlyIceServers, buildTurnOnlyPcWithConfig } from "./webrtc/turn-only.js";
 
 const FORCE_TURN_STORAGE_KEY = "adminV2ForceTurn";
 const BITRATE_OPTIONS = [300, 600, 1200, 2500];
@@ -153,6 +154,7 @@ const pcManager = {
 		}
 		this.resetNegotiationDebounce();
 		const pc = this.pc;
+		const turnCleanup = pc && typeof pc.__turnCleanup === "function" ? pc.__turnCleanup : null;
 		const diagChannel = this.dc;
 		const keepAliveDc = this.keepAliveDc;
 		this.pc = null;
@@ -173,6 +175,13 @@ const pcManager = {
 				keepAliveDc.close();
 			} catch (error) {
 				// ignore
+			}
+		}
+		if (turnCleanup) {
+			try {
+				turnCleanup();
+			} catch (error) {
+				log("admin", "turn-cleanup-error", { message: error?.message || String(error) });
 			}
 		}
 		this.keepAliveDc = null;
@@ -290,21 +299,20 @@ const pcManager = {
 		}
 
 		try {
-			const { iceServers, ttlSec } = await fetchIceConfig({ turnOnly, tcpOnly });
-			const config = {
-				iceServers,
-				iceTransportPolicy: turnOnly ? "relay" : "all",
-				bundlePolicy: "max-bundle",
-				rtcpMuxPolicy: "require",
-				iceCandidatePoolSize: 2,
-				sdpSemantics: "unified-plan",
-			};
-			log("ice", "servers_applied", { count: iceServers.length, tcpOnly, turnOnly });
-
-			const pc = new RTCPeerConnection(config);
+			const iceConfig = await fetchIceConfig({ turnOnly, tcpOnly });
+			const ttlSec = iceConfig?.ttlSec || null;
+			const effectiveTurnOnly = iceConfig?.forceRelay ?? turnOnly;
+			const effectiveTcpOnly = iceConfig?.tcpOnly ?? tcpOnly;
+			this.lastOptions = { turnOnly: effectiveTurnOnly, tcpOnly: effectiveTcpOnly };
+			log("ice", "servers_applied", {
+				count: Array.isArray(iceConfig?.iceServers) ? iceConfig.iceServers.length : 0,
+				tcpOnly: Boolean(effectiveTcpOnly),
+				turnOnly: Boolean(effectiveTurnOnly),
+			});
+			const pc = buildTurnOnlyPcWithConfig(iceConfig, { forceRelay: effectiveTurnOnly, tcpOnly: effectiveTcpOnly });
 			this.pc = pc;
 			this.createdCount += 1;
-			this.fallbackAttempted = tcpOnly;
+			this.fallbackAttempted = Boolean(effectiveTcpOnly);
 			this.gatheredCandidates = [];
 			this.lastSelectedPairId = null;
 			state.zeroTrafficRestarted = false;
@@ -312,9 +320,9 @@ const pcManager = {
 			this.attachEvents(pc);
 			this.ensureRecvOnly(pc);
 			this.createDiagChannel(pc);
-			this.setupKeepAlive(pc);
-			console.log("[pc] created", { turnOnly, tcpOnly });
-			log("admin", "pc created", { turnOnly, tcpOnly, ttlSec });
+			this.keepAliveDc = pc?.__turnOnly?.keepAliveChannel || null;
+			console.log("[pc] created", { turnOnly: effectiveTurnOnly, tcpOnly: effectiveTcpOnly });
+			log("admin", "pc created", { turnOnly: effectiveTurnOnly, tcpOnly: effectiveTcpOnly, ttlSec });
 			return pc;
 		} finally {
 			this.creating = false;
@@ -1986,49 +1994,35 @@ function updateTokenIndicator(message, severity) {
 }
 
 async function fetchIceConfig({ turnOnly, tcpOnly }) {
-	const url = `/api/ice?turnOnly=${turnOnly ? 1 : 0}&tcpOnly=${tcpOnly ? 1 : 0}`;
-	const response = await fetch(url, { cache: "no-store" });
-	if (!response.ok) {
-		throw new Error(`ICE config HTTP ${response.status}`);
+	try {
+		const config = await buildTurnOnlyIceServers({ forceRelay: turnOnly, tcpOnly });
+		const ttlSec = config?.ttlSec || null;
+		const count = Array.isArray(config?.iceServers) ? config.iceServers.length : 0;
+		console.log("[ice] config_fetched", {
+			ttlSec,
+			tcpOnly: Boolean(config?.tcpOnly ?? tcpOnly),
+			turnOnly: Boolean(config?.forceRelay ?? turnOnly),
+			count,
+		});
+		log("ice", "config_fetched", {
+			ttlSec,
+			tcpOnly: Boolean(config?.tcpOnly ?? tcpOnly),
+			turnOnly: Boolean(config?.forceRelay ?? turnOnly),
+			count,
+		});
+		state.lastConfigRefresh = Date.now();
+		state.configTtlSec = ttlSec;
+		updateTokenIndicator();
+		return config;
+	} catch (error) {
+		log("ice", "config_error", {
+			message: error?.message || String(error),
+			tcpOnly: Boolean(tcpOnly),
+			turnOnly: Boolean(turnOnly),
+		});
+		console.error("[turn] turn_creds_error", error);
+		throw error;
 	}
-	const json = await response.json();
-	let iceServers = Array.isArray(json?.iceServers) ? json.iceServers : [];
-	if (tcpOnly) {
-		iceServers = iceServers
-			.map((entry) => {
-				if (!entry) {
-					return null;
-				}
-				const urls = Array.isArray(entry.urls) ? entry.urls : entry.urls ? [entry.urls] : [];
-				const filtered = urls.filter((url) => typeof url === "string" && /turns:/i.test(url) && /transport=tcp/i.test(url));
-				if (!filtered.length) {
-					return null;
-				}
-				return { ...entry, urls: filtered.length === 1 ? filtered[0] : filtered };
-			})
-			.filter(Boolean);
-	}
-	const serverUrls = iceServers.map((entry) => {
-		const urls = Array.isArray(entry?.urls) ? entry.urls : entry?.urls ? [entry.urls] : [];
-		return urls;
-	});
-	console.log("[ice] config_fetched", {
-		ttlSec: json?.ttlSec || null,
-		tcpOnly: Boolean(tcpOnly),
-		turnOnly: Boolean(turnOnly),
-		count: iceServers.length,
-		servers: serverUrls,
-	});
-	log("ice", "config_fetched", {
-		ttlSec: json?.ttlSec || null,
-		tcpOnly: Boolean(tcpOnly),
-		turnOnly: Boolean(turnOnly),
-		count: iceServers.length,
-	});
-	state.lastConfigRefresh = Date.now();
-	state.configTtlSec = json?.ttlSec || null;
-	updateTokenIndicator();
-	return { iceServers, ttlSec: json?.ttlSec || null };
 }
 
 async function fetchJson(url, options = {}) {

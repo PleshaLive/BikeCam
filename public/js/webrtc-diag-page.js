@@ -61,6 +61,13 @@ function togglePanels(visible) {
 async function initPeer() {
   if (state.pc) {
     try {
+      if (typeof state.pc.__turnCleanup === "function") {
+        state.pc.__turnCleanup();
+      }
+    } catch (error) {
+      // ignore
+    }
+    try {
       state.pc.close();
     } catch (error) {
       // ignore
@@ -68,6 +75,7 @@ async function initPeer() {
     state.pc = null;
   }
   clearCandidates();
+  state.lastStats = null;
   try {
     state.pc = await createTurnOnlyPeerConnection();
     renderServers();
@@ -78,7 +86,17 @@ async function initPeer() {
 
 function renderServers() {
   const servers = getRecordedIceServers();
-  dom.serversDetails.textContent = JSON.stringify(servers, null, 2);
+  const context = state.pc?.__turnOnly || {};
+  dom.serversDetails.textContent = JSON.stringify(
+    {
+      turnOnly: Boolean(context.forceRelay),
+      tcpOnly: Boolean(context.tcpOnly),
+      ttlSec: context.ttlSec ?? null,
+      iceServers: servers,
+    },
+    null,
+    2
+  );
 }
 
 async function pollStats() {
@@ -277,7 +295,7 @@ function updateFlags(flags) {
 }
 
 function applyInitialFlags() {
-  dom.turnOnlyToggle.checked = getQueryFlag("turnOnly", 1);
+  dom.turnOnlyToggle.checked = getQueryFlag("turnOnly", 0);
   dom.tcpOnlyToggle.checked = getQueryFlag("tcpOnly", 0);
 }
 
