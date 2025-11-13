@@ -1,7 +1,6 @@
 import {
 	WS_BASE,
 	PUBLIC_FORCE_TURN_DEFAULT,
-	getTurnAdminKey,
 	setTurnAdminKey,
 	buildApiUrl,
 } from "./shared/env.js";
@@ -9,9 +8,9 @@ import { createReceiverPc, listQualityPresets } from "./webrtc/pc-factory.js";
 import startTileStats from "./webrtc/stats-panel.js";
 import VisibilityStore from "./state/visibility-store.js";
 import { parseCandidate } from "./webrtc/utils.js";
+import { getTurnConfig as fetchTurnConfig, invalidateTurnConfigCache, maskIceServers } from "./webrtc/turn-config.js";
 
 const SIGNAL_URL = WS_BASE;
-const TURN_ENDPOINT = "/api/webrtc/turn-creds";
 const ROSTER_ENDPOINT = "/api/admin/cameras";
 const VISIBILITY_ENDPOINT = "/api/visibility";
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1_000;
@@ -203,47 +202,29 @@ class TurnManager {
 			clearTimeout(this.refreshTimer);
 			this.refreshTimer = null;
 		}
-		const key = getTurnAdminKey();
-		if (!key) {
-			throw new Error("TURN_ADMIN_KEY missing. Provide ?turnKey=... in URL or use the TURN key form.");
+		if (force) {
+			invalidateTurnConfigCache();
 		}
-		const url = new URL(buildApiUrl(TURN_ENDPOINT));
-		url.searchParams.set("key", key);
-		url.searchParams.set("t", Date.now().toString());
-		logDebug("turn", "fetch", { url: url.toString() });
-		const payload = await fetchJson(url.toString());
-		if (payload && payload.adminKey) {
-			setTurnAdminKey(payload.adminKey);
+		logDebug("turn", "fetch", { force });
+		let config;
+		try {
+			config = await fetchTurnConfig({ forceRefresh: force });
+		} catch (error) {
+			logDebug("turn", "fetch-error", { message: error?.message || String(error) });
+			throw error;
 		}
-		const ttlSecRaw = Number(payload?.ttlSec ?? payload?.ttl ?? 0);
-		const ttlSec = Number.isFinite(ttlSecRaw) && ttlSecRaw > 0 ? ttlSecRaw : null;
-		const fetchedAt = Date.now();
-		const expiresAt = ttlSec ? fetchedAt + ttlSec * 1_000 : null;
-
-		const urls = Array.isArray(payload?.urls) ? payload.urls : payload?.urls ? [payload.urls] : [];
-		let iceServers = [];
-		if (Array.isArray(payload?.iceServers) && payload.iceServers.length) {
-			iceServers = payload.iceServers;
-		} else if (urls.length && payload?.username && payload?.credential) {
-			iceServers = [
-				{
-					urls,
-					username: payload.username,
-					credential: payload.credential,
-				},
-			];
-		}
-
+		const iceServers = Array.isArray(config?.iceServers) ? config.iceServers : [];
 		this.token = {
 			iceServers,
-			ttlSec,
-			fetchedAt,
-			expiresAt,
-			raw: payload,
+			ttlSec: config?.ttlSec ?? null,
+			fetchedAt: config?.fetchedAt ?? Date.now(),
+			expiresAt: config?.expiresAt ?? null,
+			raw: config?.raw ?? null,
+			publicIp: config?.publicIp ?? null,
 		};
 		this.onUpdate(this.token);
 		this.scheduleRefresh();
-		logDebug("turn", "ready", { ttlSec, iceServers: iceServers.length });
+		logDebug("turn", "ready", { ttlSec: this.token.ttlSec, servers: maskIceServers(iceServers) });
 		return this.token;
 	}
 

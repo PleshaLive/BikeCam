@@ -1,34 +1,29 @@
 import { API_BASE, DEBUG_WEBRTC } from "./endpoints.js";
 import { computeInboundVideoMetrics } from "./stats.js";
+import { getTurnConfig as fetchTurnConfig } from "./webrtc/turn-config.js";
 
-const REMOTE_CONFIG_ENDPOINT = `${API_BASE}/api/webrtc/config`;
-const FETCH_RETRY_ATTEMPTS = 3;
-const FETCH_RETRY_DELAY_MS = 300;
 const KEEPALIVE_INTERVAL_MS = 10_000;
 const STATS_INTERVAL_MS = 15_000;
 const ICE_DISCONNECT_GRACE_MS = 5_000;
 const ICE_RECOVERY_TIMEOUT_MS = 10_000;
 const RECONNECT_BACKOFF = [1_000, 2_000, 5_000, 10_000];
 
-const STATIC_CONFIG = {
-	iceServers: [
-		{
-			urls: ["stun:stun.l.google.com:19302"],
-		},
-	],
-	fallback: {
-		mjpeg: true,
-		endpoint: `${API_BASE}/fallback/mjpeg`,
-		heartbeatSeconds: 20,
-		maxFps: 5,
-	},
+const FALLBACK_SETTINGS = {
+	mjpeg: true,
+	endpoint: `${API_BASE}/fallback/mjpeg`,
+	heartbeatSeconds: 20,
+	maxFps: 5,
 };
+const CACHE_SKEW_MS = 30_000;
+const MIN_CACHE_MS = 15_000;
+const TURN_ERROR_BANNER_ID = "turn-config-error-banner";
+
+let turnErrorShown = false;
 
 const configCache = {
 	promise: null,
 	value: null,
 	expiresAt: 0,
-	ttlMs: 0,
 };
 
 const diagStore = createDiagStore();
@@ -88,139 +83,160 @@ function cloneIceServers(iceServers) {
 		})
 		.filter(Boolean);
 }
-
-function cloneConfig(config) {
-	return {
-		iceServers: cloneIceServers(config?.iceServers),
-		fallback: { ...(config?.fallback || {}) },
-		ttlSec: config?.ttlSec || null,
-	};
+function isTurnUrl(url) {
+	return typeof url === "string" && (url.startsWith("turn:") || url.startsWith("turns:"));
 }
 
-function mergeConfig(remote) {
-	const base = cloneConfig(STATIC_CONFIG);
-	if (!remote || typeof remote !== "object") {
-		return base;
-	}
-
-	const merged = {
-		iceServers: base.iceServers,
-		fallback: { ...base.fallback },
-		ttlSec: remote.ttlSec || base.ttlSec || null,
-	};
-
-	if (Array.isArray(remote.iceServers) && remote.iceServers.length) {
-		merged.iceServers = cloneIceServers(remote.iceServers);
-	}
-
-	if (remote.fallback && typeof remote.fallback === "object") {
-		merged.fallback = {
-			...merged.fallback,
-			...remote.fallback,
-		};
-	}
-
-	return merged;
-}
-
-function delay(ms) {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-}
-
-async function fetchRemoteConfig() {
-	for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
-		try {
-			const response = await fetch(REMOTE_CONFIG_ENDPOINT, {
-				cache: "no-store",
-				credentials: "include",
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP ${response.status}`);
-			}
-
-			return response.json();
-		} catch (error) {
-			if (attempt === FETCH_RETRY_ATTEMPTS) {
-				console.warn("[ICE] remote config fetch failed", error);
-				break;
-			}
-			await delay(FETCH_RETRY_DELAY_MS * attempt);
-		}
-	}
-
-	return null;
-}
-
-function applyForceTurn(config, forceTurnOnly) {
-	if (!forceTurnOnly) {
-		return cloneConfig(config);
-	}
-
-	const filtered = cloneConfig(config);
-	filtered.iceServers = filtered.iceServers
+function filterTurnOnlyServers(servers) {
+	return cloneIceServers(servers)
 		.map((server) => {
 			if (!server) {
 				return null;
 			}
-
-			const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-			const turnUrls = urls.filter((url) => isTurnUrl(url));
-			if (!turnUrls.length) {
+			const urls = Array.isArray(server.urls) ? server.urls : server.urls ? [server.urls] : [];
+			const filtered = urls.filter((url) => isTurnUrl(url));
+			if (!filtered.length) {
 				return null;
 			}
-
-			const copy = { ...server };
-			copy.urls = turnUrls;
-			return copy;
+			return {
+				...server,
+				urls: filtered.length === 1 ? filtered[0] : filtered,
+			};
 		})
 		.filter(Boolean);
-
-	return filtered;
 }
 
-function isTurnUrl(url) {
-	return typeof url === "string" && (url.startsWith("turn:") || url.startsWith("turns:"));
+function buildResolvedConfig(base, forceTurnOnly) {
+	const servers = forceTurnOnly ? filterTurnOnlyServers(base.iceServers) : cloneIceServers(base.iceServers);
+	const fallbackSource = base?.fallback && typeof base.fallback === "object" ? base.fallback : null;
+	return {
+		iceServers: servers,
+		fallback: fallbackSource ? { ...FALLBACK_SETTINGS, ...fallbackSource } : { ...FALLBACK_SETTINGS },
+		ttlSec: base.ttlSec ?? null,
+		fetchedAt: base.fetchedAt ?? Date.now(),
+		expiresAt: base.expiresAt ?? null,
+		publicIp: base.publicIp ?? null,
+	};
+}
+
+function cloneResolvedConfig(config) {
+	return {
+		iceServers: cloneIceServers(config?.iceServers),
+		fallback: { ...(config?.fallback || {}) },
+		ttlSec: config?.ttlSec ?? null,
+		fetchedAt: config?.fetchedAt ?? null,
+		expiresAt: config?.expiresAt ?? null,
+		publicIp: config?.publicIp ?? null,
+	};
+}
+
+function showTurnErrorBanner(message) {
+	if (typeof document === "undefined") {
+		return;
+	}
+	let banner = document.getElementById(TURN_ERROR_BANNER_ID);
+	if (!banner) {
+		banner = document.createElement("div");
+		banner.id = TURN_ERROR_BANNER_ID;
+		banner.style.position = "fixed";
+		banner.style.top = "0";
+		banner.style.left = "0";
+		banner.style.right = "0";
+		banner.style.zIndex = "9999";
+		banner.style.padding = "12px";
+		banner.style.background = "#b00020";
+		banner.style.color = "#fff";
+		banner.style.fontFamily = "system-ui, sans-serif";
+		banner.style.textAlign = "center";
+		document.body.appendChild(banner);
+	}
+	banner.textContent = message;
+}
+
+function notifyTurnError(error) {
+	const message = error?.message || String(error);
+	console.error("[ICE] TURN configuration error", error);
+	if (turnErrorShown) {
+		return;
+	}
+	turnErrorShown = true;
+	showTurnErrorBanner(`TURN connectivity issue: ${message}`);
+	if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+		try {
+			window.dispatchEvent(new CustomEvent("turn-config-error", { detail: { message } }));
+		} catch (dispatchError) {
+			// ignore dispatch issues
+		}
+	}
+}
+
+function normalizeTurnPayload(payload) {
+	const fallbackSource = payload?.fallback && typeof payload.fallback === "object"
+		? payload.fallback
+		: payload?.raw?.fallback && typeof payload.raw.fallback === "object"
+			? payload.raw.fallback
+			: null;
+	return {
+		iceServers: cloneIceServers(payload?.iceServers),
+		ttlSec: payload?.ttlSec ?? null,
+		fetchedAt: payload?.fetchedAt ?? Date.now(),
+		expiresAt: payload?.expiresAt ?? null,
+		fallback: fallbackSource ? { ...fallbackSource } : null,
+		publicIp: typeof payload?.publicIp === "string"
+			? payload.publicIp
+			: typeof payload?.raw?.publicIp === "string"
+				? payload.raw.publicIp
+				: null,
+	};
 }
 
 async function resolveConfig(forceTurnOnly = false) {
 	const now = Date.now();
 	if (configCache.value && configCache.expiresAt > now) {
-		return applyForceTurn(configCache.value, forceTurnOnly);
+		return buildResolvedConfig(configCache.value, forceTurnOnly);
 	}
 
 	if (!configCache.promise) {
 		configCache.promise = (async () => {
-			const remote = await fetchRemoteConfig();
-			const merged = remote ? mergeConfig(remote) : cloneConfig(STATIC_CONFIG);
-			const ttlMs = Math.max(30_000, Math.min((remote?.ttlSec || 3600) * 1000, 3_600_000));
-			configCache.value = merged;
-			configCache.ttlMs = ttlMs;
-			configCache.expiresAt = Date.now() + ttlMs * 0.9;
-			return merged;
+			const turnPayload = await fetchTurnConfig();
+			const normalized = normalizeTurnPayload(turnPayload);
+			const expiry = normalized.expiresAt ?? Date.now() + 60_000;
+			normalized.expiresAt = expiry;
+			configCache.value = normalized;
+			configCache.expiresAt = Math.max(expiry - CACHE_SKEW_MS, Date.now() + MIN_CACHE_MS);
+			return normalized;
 		})()
 			.catch((error) => {
-				console.warn("[ICE] using static fallback", error);
-				const fallback = cloneConfig(STATIC_CONFIG);
-				configCache.value = fallback;
-				configCache.ttlMs = 60_000;
-				configCache.expiresAt = Date.now() + 55_000;
-				return fallback;
+				configCache.promise = null;
+				throw error;
 			})
 			.finally(() => {
 				configCache.promise = null;
 			});
 	}
 
-	const base = await configCache.promise;
-	return applyForceTurn(base, forceTurnOnly);
+	try {
+		const base = await configCache.promise;
+		return buildResolvedConfig(base, forceTurnOnly);
+	} catch (error) {
+		notifyTurnError(error);
+		if (configCache.value) {
+			return buildResolvedConfig(configCache.value, forceTurnOnly);
+		}
+		return {
+			iceServers: [],
+			fallback: { ...FALLBACK_SETTINGS },
+			ttlSec: null,
+			fetchedAt: Date.now(),
+			expiresAt: Date.now() + MIN_CACHE_MS,
+			publicIp: null,
+		};
+	}
 }
 
 export async function getConfig(forceTurnOnly = false) {
 	const config = await resolveConfig(forceTurnOnly);
-	return cloneConfig(config);
+	return cloneResolvedConfig(config);
 }
 
 export function hasWebRTCSupport() {

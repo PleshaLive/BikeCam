@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: "/webrtc/diag/",
+  publicDir: false,
   build: {
     outDir: "public/webrtc/diag",
     emptyOutDir: true,
