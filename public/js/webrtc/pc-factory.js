@@ -137,6 +137,14 @@ export function createReceiverPc({
     }
   });
 
+  pc.addEventListener("icecandidate", (event) => {
+    if (event.candidate) {
+      console.log("[ICE candidate]", event.candidate.candidate);
+    } else {
+      console.log("[ICE gathering complete]");
+    }
+  });
+
   pc.addEventListener("iceconnectionstatechange", () => {
     if (typeof onIceStateChange === "function") {
       onIceStateChange(pc.iceConnectionState);
