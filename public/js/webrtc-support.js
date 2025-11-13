@@ -16,9 +16,8 @@ const FALLBACK_SETTINGS = {
 };
 const CACHE_SKEW_MS = 30_000;
 const MIN_CACHE_MS = 15_000;
-const TURN_ERROR_BANNER_ID = "turn-config-error-banner";
 
-let turnErrorShown = false;
+let turnErrorNotified = false;
 
 const configCache = {
 	promise: null,
@@ -130,44 +129,17 @@ function cloneResolvedConfig(config) {
 	};
 }
 
-function showTurnErrorBanner(message) {
-	if (typeof document === "undefined") {
-		return;
-	}
-	let banner = document.getElementById(TURN_ERROR_BANNER_ID);
-	if (!banner) {
-		banner = document.createElement("div");
-		banner.id = TURN_ERROR_BANNER_ID;
-		banner.style.position = "fixed";
-		banner.style.top = "0";
-		banner.style.left = "0";
-		banner.style.right = "0";
-		banner.style.zIndex = "9999";
-		banner.style.padding = "12px";
-		banner.style.background = "#b00020";
-		banner.style.color = "#fff";
-		banner.style.fontFamily = "system-ui, sans-serif";
-		banner.style.textAlign = "center";
-		document.body.appendChild(banner);
-	}
-	banner.textContent = message;
-}
-
 function notifyTurnError(error) {
 	const message = error?.message || String(error);
-	console.error("[ICE] TURN configuration error", error);
-	if (turnErrorShown) {
-		return;
-	}
-	turnErrorShown = true;
-	showTurnErrorBanner(`TURN connectivity issue: ${message}`);
-	if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+	console.warn("[ICE] TURN connectivity issue:", message);
+	if (!turnErrorNotified && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
 		try {
 			window.dispatchEvent(new CustomEvent("turn-config-error", { detail: { message } }));
 		} catch (dispatchError) {
 			// ignore dispatch issues
 		}
 	}
+	turnErrorNotified = true;
 }
 
 function normalizeTurnPayload(payload) {

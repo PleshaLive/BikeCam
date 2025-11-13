@@ -1,4 +1,5 @@
 const TURN_KEY_STORAGE = "admin.turnKey";
+const DEFAULT_TURN_ADMIN_KEY = "f9d8acee7412937cedb85a4ca4ab7d2b";
 
 function safeWindow() {
   try {
@@ -7,6 +8,33 @@ function safeWindow() {
     return null;
   }
 }
+
+function deriveBootstrapTurnKey() {
+  const w = safeWindow();
+  if (!w) {
+    return DEFAULT_TURN_ADMIN_KEY;
+  }
+  let candidate = "";
+  try {
+    const url = new URL(w.location.href);
+    const fromUrl = url.searchParams.get("turnKey");
+    if (fromUrl && typeof fromUrl === "string" && fromUrl.trim()) {
+      candidate = fromUrl.trim();
+    }
+  } catch (error) {
+    // ignore URL parsing issues
+  }
+  if (!candidate && typeof w.TURN_ADMIN_KEY === "string" && w.TURN_ADMIN_KEY.trim()) {
+    candidate = w.TURN_ADMIN_KEY.trim();
+  }
+  if (!candidate) {
+    candidate = DEFAULT_TURN_ADMIN_KEY;
+  }
+  w.TURN_ADMIN_KEY = candidate;
+  return candidate;
+}
+
+const bootstrapTurnKey = deriveBootstrapTurnKey();
 
 function getRuntimeEnv() {
   const w = safeWindow();
@@ -170,7 +198,8 @@ function resolveTurnKey() {
   if (stored) {
     return stored;
   }
-  return "";
+  persistTurnKey(bootstrapTurnKey);
+  return bootstrapTurnKey;
 }
 
 function resolveForceTurnDefault() {
@@ -183,12 +212,18 @@ function resolveForceTurnDefault() {
 function persistTurnKey(value) {
   if (!value) {
     writeStorage(TURN_KEY_STORAGE, "");
+    const w = safeWindow();
+    if (w) {
+      delete w.__TURN_ADMIN_KEY;
+      delete w.TURN_ADMIN_KEY;
+    }
     return;
   }
   writeStorage(TURN_KEY_STORAGE, value);
   const w = safeWindow();
   if (w) {
     w.__TURN_ADMIN_KEY = value;
+    w.TURN_ADMIN_KEY = value;
   }
 }
 
@@ -205,11 +240,12 @@ export function getTurnAdminKey() {
 
 export function setTurnAdminKey(nextKey) {
   const value = coerceString(nextKey);
-  if (value && value === turnAdminKey) {
+  const normalized = value || bootstrapTurnKey;
+  if (normalized === turnAdminKey) {
     return turnAdminKey;
   }
-  turnAdminKey = value;
-  persistTurnKey(value);
+  turnAdminKey = normalized;
+  persistTurnKey(normalized);
   return turnAdminKey;
 }
 
