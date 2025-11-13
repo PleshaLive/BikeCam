@@ -125,6 +125,26 @@ export async function loadTeamsWithLogos() {
 	const gridElement = document.getElementById("cameraGrid");
 	const statusElement = document.getElementById("teamStatus");
 
+	if (typeof document !== "undefined") {
+		const hiddenStyleId = "team-hidden-style";
+		if (!document.getElementById(hiddenStyleId)) {
+			const style = document.createElement("style");
+			style.id = hiddenStyleId;
+			style.textContent = `
+				.slot.hidden-admin .placeholder {
+					display: flex !important;
+					background: rgba(0, 0, 0, 0.7);
+					color: #ff7575;
+				}
+				.slot.hidden-admin video,
+				.slot.hidden-admin .fallback {
+					display: none !important;
+				}
+			`;
+			document.head.appendChild(style);
+		}
+	}
+
 	if (titleElement) {
 			titleElement.textContent = friendlyTitle;
 	}
@@ -214,6 +234,7 @@ export async function loadTeamsWithLogos() {
 		const fallbackNicknames = new Set();
 		const fallbackTimers = new Map();
 		const forcedFallbackOverrides = new Set();
+		const hiddenByAdmin = new Set();
 	const MAX_PLAYERS = 5;
 
 	let ws = null;
@@ -248,6 +269,9 @@ export async function loadTeamsWithLogos() {
 	}
 
 	function showSlotFallback(nickname) {
+		if (isHiddenByAdmin(nickname)) {
+			return;
+		}
 		if (!fallbackSettings.mjpeg) {
 			return;
 		}
@@ -280,7 +304,7 @@ export async function loadTeamsWithLogos() {
 	}
 
 	function activateFallback(nickname) {
-		if (!fallbackSettings.mjpeg || !nickname) {
+		if (!fallbackSettings.mjpeg || !nickname || isHiddenByAdmin(nickname)) {
 			return;
 		}
 		fallbackNicknames.add(nickname);
@@ -288,7 +312,7 @@ export async function loadTeamsWithLogos() {
 	}
 
 	function scheduleFallback(nickname) {
-		if (!fallbackSettings.mjpeg || !nickname) {
+		if (!fallbackSettings.mjpeg || !nickname || isHiddenByAdmin(nickname)) {
 			return;
 		}
 
@@ -345,6 +369,97 @@ export async function loadTeamsWithLogos() {
 			fallbackTimers.delete(nickname);
 		}
 		hideSlotFallback(nickname);
+	}
+
+	function findSlotEntry(nickname) {
+		const normalized = normalizeNickname(nickname);
+		if (!normalized) {
+			return null;
+		}
+		if (slots.has(normalized)) {
+			return { key: normalized, slot: slots.get(normalized) };
+		}
+		const targetLower = normalized.toLowerCase();
+		for (const [key, slot] of slots.entries()) {
+			if (key.toLowerCase() === targetLower) {
+				return { key, slot };
+			}
+		}
+		return null;
+	}
+
+	function isHiddenByAdmin(nickname) {
+		const normalized = normalizeNickname(nickname);
+		if (!normalized) {
+			return false;
+		}
+		return hiddenByAdmin.has(normalized.toLowerCase());
+	}
+
+	function updateSlotHiddenPresentation(nickname) {
+		const entry = findSlotEntry(nickname);
+		if (!entry) {
+			return;
+		}
+		const { slot } = entry;
+		const hidden = isHiddenByAdmin(nickname);
+		if (hidden) {
+			slot.card.classList.add("hidden-admin");
+			slot.card.classList.add("no-feed");
+			slot.placeholder.textContent = "Hidden by admin";
+			slot.placeholder.style.display = "flex";
+			slot.video.style.display = "none";
+			hideSlotFallback(nickname);
+		} else {
+			slot.card.classList.remove("hidden-admin");
+			slot.placeholder.textContent = slot.placeholder.dataset.defaultText || "No live feed";
+			if (slot.video.srcObject) {
+				slot.placeholder.style.display = "none";
+				slot.card.classList.remove("no-feed");
+			} else {
+				slot.placeholder.style.display = "";
+				slot.card.classList.add("no-feed");
+			}
+		}
+	}
+
+	function applyHiddenStatePatch(id, visible) {
+		const normalized = normalizeNickname(id);
+		if (!normalized) {
+			return;
+		}
+		const key = normalized.toLowerCase();
+		const shouldHide = !Boolean(visible);
+		const alreadyHidden = hiddenByAdmin.has(key);
+		if (shouldHide === alreadyHidden) {
+			updateSlotHiddenPresentation(normalized);
+			return;
+		}
+		if (shouldHide) {
+			if (!alreadyHidden) {
+				hiddenByAdmin.add(key);
+				cleanupSession(normalized, { notify: true });
+			}
+		} else if (alreadyHidden) {
+			hiddenByAdmin.delete(key);
+		}
+		updateSlotHiddenPresentation(normalized);
+		syncSessions();
+	}
+
+	function applyHiddenStateSnapshot(state) {
+		hiddenByAdmin.clear();
+		const hiddenMap = state && typeof state === "object" ? state.hidden || state : {};
+		Object.entries(hiddenMap).forEach(([id, flag]) => {
+			if (flag) {
+				const normalized = normalizeNickname(id);
+				if (normalized) {
+					hiddenByAdmin.add(normalized.toLowerCase());
+				}
+			}
+		});
+		currentPlayers.forEach((nickname) => updateSlotHiddenPresentation(nickname));
+		syncSessions();
 	}
 
 	function applyForcedFallbackList(list) {
@@ -441,6 +556,7 @@ export async function loadTeamsWithLogos() {
 		const placeholder = document.createElement("div");
 		placeholder.className = "placeholder";
 		placeholder.textContent = "No live feed";
+		placeholder.dataset.defaultText = "No live feed";
 
 		const label = document.createElement("div");
 		label.className = "nick";
@@ -554,6 +670,7 @@ export async function loadTeamsWithLogos() {
 				slot.card.dataset.nickname = entry.normalized;
 				fragment.appendChild(slot.card);
 				newOrder.set(entry.normalized, slot);
+				updateSlotHiddenPresentation(entry.normalized);
 			}
 
 			for (let i = prepared.length; i < MAX_PLAYERS; i += 1) {
@@ -573,8 +690,32 @@ export async function loadTeamsWithLogos() {
 		}
 
 	function setSlotStream(nickname, stream) {
-			const slot = slots.get(nickname);
+		const slot = slots.get(nickname);
 		if (!slot) {
+			return;
+		}
+
+		if (isHiddenByAdmin(nickname)) {
+			if (stream) {
+				try {
+					stream.getTracks().forEach((track) => track.stop());
+				} catch (error) {
+					// ignore cleanup
+				}
+			}
+			if (slot.video.srcObject) {
+				try {
+					slot.video.srcObject.getTracks().forEach((track) => track.stop());
+				} catch (error) {
+					// ignore cleanup
+				}
+			}
+			slot.video.srcObject = null;
+			slot.video.style.display = "none";
+			slot.card.classList.add("no-feed");
+			slot.placeholder.style.display = "flex";
+			hideSlotFallback(nickname);
+			updateSlotHiddenPresentation(nickname);
 			return;
 		}
 
@@ -665,14 +806,14 @@ export async function loadTeamsWithLogos() {
 			return;
 		}
 
-		if (!knownPublishers.has(nickname) || !currentPlayers.includes(nickname)) {
+		if (!knownPublishers.has(nickname) || !currentPlayers.includes(nickname) || isHiddenByAdmin(nickname)) {
 			cleanupSession(nickname, { notify: true, retainFallback: false });
 			retryCounts.delete(nickname);
 			cancelFallback(nickname);
 			return;
 		}
 
-		const retainFallback = failed && fallbackSettings.mjpeg;
+		const retainFallback = failed && fallbackSettings.mjpeg && !isHiddenByAdmin(nickname);
 		cleanupSession(nickname, { notify: true, retainFallback });
 
 		let attempts = retryCounts.get(nickname) || 0;
@@ -689,11 +830,11 @@ export async function loadTeamsWithLogos() {
 			cancelFallback(nickname);
 		}
 
-		if (!viewerRegistered || !wsReady) {
+		if (!viewerRegistered || !wsReady || isHiddenByAdmin(nickname)) {
 			return;
 		}
 
-		if (!hasWebRTC || hasForcedFallback(nickname)) {
+		if (!hasWebRTC || hasForcedFallback(nickname) || isHiddenByAdmin(nickname)) {
 			activateFallback(nickname);
 			return;
 		}
@@ -706,7 +847,7 @@ export async function loadTeamsWithLogos() {
 	}
 
 	async function startSession(nickname) {
-		if (!viewerRegistered || !wsReady || !knownPublishers.has(nickname)) {
+		if (!viewerRegistered || !wsReady || !knownPublishers.has(nickname) || isHiddenByAdmin(nickname)) {
 			return;
 		}
 
@@ -723,7 +864,7 @@ export async function loadTeamsWithLogos() {
 			return;
 		}
 
-		if (!hasWebRTC || hasForcedFallback(nickname)) {
+		if (!hasWebRTC || hasForcedFallback(nickname) || isHiddenByAdmin(nickname)) {
 			activateFallback(nickname);
 			return;
 		}
@@ -777,6 +918,7 @@ export async function loadTeamsWithLogos() {
 
 		pc.onicecandidate = (event) => {
 			if (!event.candidate) {
+				console.log("[ICE gathering complete]");
 				return;
 			}
 			const candidate = event.candidate.candidate || "";
@@ -784,6 +926,7 @@ export async function loadTeamsWithLogos() {
 				console.warn("[ICE] dropping non-relay candidate", candidate);
 				return;
 			}
+			console.log("[ICE candidate]", candidate);
 			sendSignal({
 				type: "VIEWER_ICE",
 				nickname,
@@ -845,6 +988,10 @@ export async function loadTeamsWithLogos() {
 		}
 
 		for (const nickname of currentPlayers) {
+			if (isHiddenByAdmin(nickname)) {
+				cleanupSession(nickname, { notify: true, retainFallback: false });
+				continue;
+			}
 			if (knownPublishers.has(nickname)) {
 				startSession(nickname);
 			} else {
@@ -853,7 +1000,7 @@ export async function loadTeamsWithLogos() {
 		}
 
 		for (const nickname of Array.from(sessions.keys())) {
-			if (!currentPlayers.includes(nickname)) {
+			if (!currentPlayers.includes(nickname) || isHiddenByAdmin(nickname)) {
 				cleanupSession(nickname, { notify: true });
 			}
 		}
@@ -954,6 +1101,12 @@ export async function loadTeamsWithLogos() {
 				break;
 			case "FORCED_FALLBACK":
 				applyForcedFallbackList(payload.nicknames);
+				break;
+			case "VISIBILITY_STATE":
+				applyHiddenStateSnapshot(payload.state);
+				break;
+			case "visibility.update":
+				applyHiddenStatePatch(payload.id, payload.visible);
 				break;
 			case "SIGNAL_PUBLISHER_ANSWER":
 				handlePublisherAnswer(payload);

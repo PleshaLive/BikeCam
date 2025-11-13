@@ -133,6 +133,7 @@
   const retryCounts = new Map();
   const fallbackNicknames = new Set();
   const forcedFallbackOverrides = new Set();
+  const hiddenByAdmin = new Set();
   let fallbackTimer = null;
   let fallbackTimerKey = null;
 
@@ -161,6 +162,22 @@
           return null;
         }
         return normalized.replace(/\s+/g, "").toLowerCase();
+      }
+
+      function isHiddenKey(key) {
+        if (!key) {
+          return false;
+        }
+        return hiddenByAdmin.has(key);
+      }
+
+      function isHiddenByAdmin(nickname) {
+        const normalized = normalizeNickname(nickname);
+        const key = nicknameKey(normalized);
+        if (!key) {
+          return false;
+        }
+        return hiddenByAdmin.has(key);
       }
 
       function createConnectionId() {
@@ -246,6 +263,10 @@
           return;
         }
 
+        if (isHiddenKey(key)) {
+          return;
+        }
+
         const url =
           createMjpegUrl(normalized);
         fallbackLayer.dataset.nickname = normalized;
@@ -290,6 +311,10 @@
           return;
         }
 
+        if (isHiddenKey(key)) {
+          return;
+        }
+
         if (fallbackLayer.dataset.nicknameKey === key && fallbackLayer.style.display === "block") {
           return;
         }
@@ -326,6 +351,10 @@
         if (!key || !normalized) {
           return;
         }
+
+        if (isHiddenKey(key)) {
+          return;
+        }
         fallbackNicknames.add(key);
         if (desiredFocusKey === key) {
           scheduleFallback(normalized);
@@ -348,12 +377,68 @@
         }
       }
 
+      function applyHiddenStatePatch(id, visible) {
+        const normalized = normalizeNickname(id);
+        const key = nicknameKey(normalized);
+        if (!normalized || !key) {
+          return;
+        }
+
+        const shouldHide = !Boolean(visible);
+        const alreadyHidden = hiddenByAdmin.has(key);
+        if (shouldHide === alreadyHidden) {
+          return;
+        }
+
+        if (shouldHide) {
+          hiddenByAdmin.add(key);
+          cancelFallback(normalized);
+          cleanupSession(normalized, { notify: true, retainFallback: false });
+          retryCounts.delete(key);
+        } else {
+          hiddenByAdmin.delete(key);
+        }
+
+        syncSessions();
+        updateDisplay();
+      }
+
+      function applyHiddenStateSnapshot(state) {
+        hiddenByAdmin.clear();
+        const hiddenMap = state && typeof state === "object" ? state.hidden || state : {};
+
+        Object.entries(hiddenMap).forEach(([id, flag]) => {
+          if (!flag) {
+            return;
+          }
+          const normalized = normalizeNickname(id);
+          const key = nicknameKey(normalized);
+          if (!normalized || !key) {
+            return;
+          }
+          hiddenByAdmin.add(key);
+          cancelFallback(normalized);
+          cleanupSession(normalized, { notify: true, retainFallback: false });
+          retryCounts.delete(key);
+        });
+
+        if (displayedNicknameKey && hiddenByAdmin.has(displayedNicknameKey)) {
+          setDisplay(null, null);
+        }
+        if (fallbackLayer.dataset.nicknameKey && hiddenByAdmin.has(fallbackLayer.dataset.nicknameKey)) {
+          hideFallback(fallbackLayer.dataset.nickname);
+        }
+
+        syncSessions();
+        updateDisplay();
+      }
+
       function applyForcedFallbackList(list) {
         const updated = new Set();
         if (Array.isArray(list)) {
           for (const value of list) {
             const key = nicknameKey(value);
-            if (key) {
+            if (key && !isHiddenKey(key)) {
               updated.add(key);
             }
           }
@@ -498,6 +583,20 @@
           return;
         }
 
+        if (hiddenByAdmin.has(desiredFocusKey)) {
+          fallbackNicknames.delete(desiredFocusKey);
+          if (fallbackTimer && fallbackTimerKey === desiredFocusKey) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+            fallbackTimerKey = null;
+          }
+          hideFallback();
+          if (displayedStream) {
+            setDisplay(null, null);
+          }
+          return;
+        }
+
         const session = sessions.get(desiredFocusKey) || null;
         const hasStream = Boolean(session && session.stream);
         const fallbackTarget = desiredFocusDisplay || session?.nickname || "";
@@ -595,14 +694,14 @@
           return;
         }
 
-        if (!knownPublishers.has(key)) {
+        if (!knownPublishers.has(key) || hiddenByAdmin.has(key)) {
           cleanupSession(normalized, { notify: true, retainFallback: false });
           retryCounts.delete(key);
           cancelFallback(normalized);
           return;
         }
 
-        const retainFallback = failed && fallbackSettings.mjpeg;
+        const retainFallback = failed && fallbackSettings.mjpeg && !hiddenByAdmin.has(key);
         cleanupSession(normalized, { notify: true, retainFallback });
 
         let attempts = retryCounts.get(key) || 0;
@@ -619,11 +718,11 @@
           cancelFallback(normalized);
         }
 
-        if (!viewerRegistered || !wsReady) {
+        if (!viewerRegistered || !wsReady || hiddenByAdmin.has(key)) {
           return;
         }
 
-        if (!hasWebRTC || hasForcedFallback(normalized)) {
+        if (!hasWebRTC || hasForcedFallback(normalized) || hiddenByAdmin.has(key)) {
           activateFallback(normalized);
           return;
         }
@@ -646,7 +745,7 @@
           return;
         }
 
-        if (!knownPublishers.has(key)) {
+        if (!knownPublishers.has(key) || hiddenByAdmin.has(key)) {
           return;
         }
 
@@ -654,7 +753,7 @@
           return;
         }
 
-        if (!hasWebRTC) {
+        if (!hasWebRTC || hiddenByAdmin.has(key)) {
           activateFallback(normalized);
           return;
         }
@@ -781,13 +880,17 @@
         }
 
         for (const [key, display] of knownPublishers.entries()) {
+          if (hiddenByAdmin.has(key)) {
+            cleanupSession(display, { notify: true });
+            continue;
+          }
           if (!sessions.has(key)) {
             startSession(display);
           }
         }
 
         for (const [key, session] of Array.from(sessions.entries())) {
-          if (!knownPublishers.has(key)) {
+          if (!knownPublishers.has(key) || hiddenByAdmin.has(key)) {
             cleanupSession(session.nickname, { notify: true });
           }
         }
@@ -906,6 +1009,7 @@
             handleActivePublishers(payload.publishers);
             handleFocusUpdate(payload.currentFocus);
             applyForcedFallbackList(payload.forcedFallback);
+            applyHiddenStateSnapshot(payload.visibility);
             break;
           case "STATE_UPDATE":
             handleFocusUpdate(payload.currentFocus);
@@ -919,6 +1023,12 @@
             break;
           case "FORCED_FALLBACK":
             applyForcedFallbackList(payload.nicknames);
+            break;
+          case "VISIBILITY_STATE":
+            applyHiddenStateSnapshot(payload.state);
+            break;
+          case "visibility.update":
+            applyHiddenStatePatch(payload.id, payload.visible);
             break;
           case "SIGNAL_PUBLISHER_ANSWER":
             handlePublisherAnswer(payload);

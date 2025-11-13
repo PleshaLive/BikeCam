@@ -2,8 +2,16 @@ import { logEv, addCandidate, recordIceServers } from "./diag.js";
 import { parseCandidate, describeCandidate } from "./utils.js";
 
 const TURN_CREDS_ENDPOINT = "https://turn.raptors.life/api/webrtc/turn-creds";
+const DEFAULT_TURN_STUN = "stun:turn.raptors.life:3478";
 const DEFAULT_TURN_UDP = "turn:turn.raptors.life:3478?transport=udp";
 const DEFAULT_TURN_TCP = "turns:turn.raptors.life:5349?transport=tcp";
+const DEFAULT_TURN2_STUN = "stun:turn2.raptors.life:3478";
+const DEFAULT_TURN2_UDP = "turn:turn2.raptors.life:3478?transport=udp";
+const DEFAULT_TURN2_TCP = "turns:turn2.raptors.life:5349?transport=tcp";
+const DEFAULT_TURN_BUNDLES = [
+	[DEFAULT_TURN_STUN, DEFAULT_TURN_UDP, DEFAULT_TURN_TCP],
+	[DEFAULT_TURN2_STUN, DEFAULT_TURN2_UDP, DEFAULT_TURN2_TCP],
+];
 const ADMIN_KEY_QUERY_PARAM = "turnKey";
 const ADMIN_KEY_STORAGE = "turnAdminKey";
 const TURN_ERROR_BANNER_ID = "turn-creds-error-banner";
@@ -468,14 +476,20 @@ function ensureTurnEndpoints(servers) {
 			const urls = Array.isArray(entry.urls) ? entry.urls : entry.urls ? [entry.urls] : [];
 			return urls.some((url) => typeof url === "string" && url.toLowerCase() === target.toLowerCase());
 		});
-	if (username && credential) {
-		if (!hasUrl(DEFAULT_TURN_UDP)) {
-			list.push({ urls: [DEFAULT_TURN_UDP], username, credential });
+	const ensureBundle = (bundle) => {
+		if (!username || !credential) {
+			return;
 		}
-		if (!hasUrl(DEFAULT_TURN_TCP)) {
-			list.push({ urls: [DEFAULT_TURN_TCP], username, credential });
+		if (!Array.isArray(bundle) || !bundle.length) {
+			return;
 		}
-	}
+		const missing = bundle.some((url) => !hasUrl(url));
+		if (!missing) {
+			return;
+		}
+		list.push({ urls: bundle.slice(), username, credential });
+	};
+	DEFAULT_TURN_BUNDLES.forEach(ensureBundle);
 	return list;
 }
 

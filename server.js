@@ -800,6 +800,15 @@ app.get("/api/webrtc/config", (req, res) => {
         username,
         credential
       },
+      {
+        urls: [
+          "stun:turn2.raptors.life:3478",
+          "turn:turn2.raptors.life:3478?transport=udp",
+          "turns:turn2.raptors.life:5349?transport=tcp"
+        ],
+        username,
+        credential
+      },
       // (опционально) Google STUN в хвост:
       { urls: ["stun:stun.l.google.com:19302"] }
     ],
@@ -818,11 +827,29 @@ app.get("/api/webrtc/turn-creds", (req, res) => {
     ttlSec: 3600,
     userId: "admin-viewer"
   });
+  const primaryUrls = [
+    "stun:turn.raptors.life:3478",
+    "turn:turn.raptors.life:3478?transport=udp",
+    "turns:turn.raptors.life:5349?transport=tcp"
+  ];
+  const secondaryUrls = [
+    "stun:turn2.raptors.life:3478",
+    "turn:turn2.raptors.life:3478?transport=udp",
+    "turns:turn2.raptors.life:5349?transport=tcp"
+  ];
   res.json({
-    urls: [
-      "stun:turn.raptors.life:3478",
-      "turn:turn.raptors.life:3478?transport=udp",
-      "turns:turn.raptors.life:5349?transport=tcp"
+    urls: primaryUrls,
+    iceServers: [
+      {
+        urls: primaryUrls,
+        username,
+        credential
+      },
+      {
+        urls: secondaryUrls,
+        username,
+        credential
+      }
     ],
     username,
     credential,
@@ -2172,6 +2199,7 @@ function handleHello(socket, meta, payload) {
     sendJson(socket, { type: "VIEWER_REGISTERED", role });
     sendJson(socket, { type: "ACTIVE_PUBLISHERS", publishers: getActivePublishers() });
     sendJson(socket, { type: "FORCED_FALLBACK", nicknames: getForcedFallbackList() });
+    sendJson(socket, { type: "VISIBILITY_STATE", state: visibilityStore });
     logEvent("viewer", "Viewer connected", { role, socketId: meta.id });
     return;
   }
