@@ -134,7 +134,6 @@ export async function loadTeamsWithLogos() {
 				.slot.hidden-admin .placeholder {
 					display: flex !important;
 					background: rgba(0, 0, 0, 0.7);
-					color: #ff7575;
 				}
 				.slot.hidden-admin video,
 				.slot.hidden-admin .fallback {
@@ -406,7 +405,7 @@ export async function loadTeamsWithLogos() {
 		if (hidden) {
 			slot.card.classList.add("hidden-admin");
 			slot.card.classList.add("no-feed");
-			slot.placeholder.textContent = "Hidden by admin";
+			slot.placeholder.textContent = slot.placeholder.dataset.defaultText || "No live feed";
 			slot.placeholder.style.display = "flex";
 			slot.video.style.display = "none";
 			hideSlotFallback(nickname);
